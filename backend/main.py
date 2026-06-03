@@ -40,9 +40,14 @@ from insights import compute_insights
 app = FastAPI(title="District Slide Tool", version="10.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173","http://localhost:5174",
-                   "http://127.0.0.1:5173","http://127.0.0.1:5174"],
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://k12-slide-generator.vercel.app",
+        "https://k12-slide-generator-3830qhfns-oleru.vercel.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
