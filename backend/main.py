@@ -40,13 +40,8 @@ from insights import compute_insights
 app = FastAPI(title="District Slide Tool", version="10.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://k12-slide-generator.vercel.app",
-        "https://k12-slide-generator-3830qhfns-oleru.vercel.app",
-        "https://k12-slide-generator-hylejvhls-oleru.vercel.app",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -578,7 +573,6 @@ async def generate_presentation(payload: str = Form(...), auto_inserts: str = Fo
 
     do_auto = auto_inserts.lower() != "false"
     if do_auto and slides_config:
-        # Auto-insert: agenda after cover, section dividers between categories, methodology at end
         CATEGORY_ORDER = {
             "cover":["Cover & Section"],"mission":["Cover & Section"],"agenda":["Cover & Section"],
             "tsi_status_trends":["TSI"],"tsi_status":["TSI"],"tsi_leaderboard":["TSI"],
@@ -587,8 +581,6 @@ async def generate_presentation(payload: str = Form(...), auto_inserts: str = Fo
             "postsecondary_enrollment":["Postsecondary"],
             "hb3_funds":["HB3 Funding"],
         }
-        # Build agenda slide from all user-selected slides
-        # Clean display names for agenda — use short slide type name, not data-derived title
         CLEAN_NAMES = {
             "tsi_status_trends":       "TSI Status Trends",
             "tsi_status":              "TSI Status by Campus",
@@ -608,14 +600,12 @@ async def generate_presentation(payload: str = Form(...), auto_inserts: str = Fo
                        for sc in slides_config
                        if sc["slide_type"] not in ("cover","agenda","methodology","section_divider","mission","outro")]
 
-        # Inject agenda after first cover (or at start)
         cover_idx = next((i for i,sc in enumerate(slides_config) if sc["slide_type"]=="cover"), -1)
         if agenda_list and not any(sc["slide_type"]=="agenda" for sc in slides_config):
             agenda_sc = {"slide_type":"agenda","slide_data":{"District":"","Title":"Agenda","slides_list":agenda_list},"chart_data":{},"mode":"percent","layout":"agenda","insights":[],"month":"","year_label":"","footnote":""}
             insert_at = cover_idx+1 if cover_idx>=0 else 0
             slides_config.insert(insert_at, agenda_sc)
 
-        # Insert section dividers between category changes
         prev_cat = None
         result = []
         for sc in slides_config:
@@ -628,7 +618,6 @@ async def generate_presentation(payload: str = Form(...), auto_inserts: str = Fo
             prev_cat = cur_cat
         slides_config = result
 
-        # Append methodology slide at end if not already there
         if not any(sc["slide_type"]=="methodology" for sc in slides_config):
             slides_config.append({"slide_type":"methodology","slide_data":{"Title":"Methodology"},"chart_data":{},"mode":"percent","layout":"methodology","insights":[],"month":"","year_label":"","footnote":""})
 
@@ -646,7 +635,6 @@ async def generate_presentation(payload: str = Form(...), auto_inserts: str = Fo
             footnote    = sc.get("footnote",""),
             title       = sc.get("slide_data",{}).get("Title",""),
         )
-        # Extract the <div class="slide"...> from the full HTML
         start = html.find('<div class="slide"')
         end   = html.rfind("</div>") + 6
         body  = html[start:end] if start >= 0 else html
