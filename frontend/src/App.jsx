@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API = "http://127.0.0.1:8000";
+const API = "https://k12-slide-generator-api.onrender.com";
 const COLORS = ["#0D1B4B","#00B0F0","#E8192C","#FFC000","#C084FC","#6B7280"];
 const MANUAL = "__manual__";
 
