@@ -44,6 +44,7 @@ app.add_middleware(
         "http://localhost:5173",
         "https://k12-slide-generator.vercel.app",
         "https://k12-slide-generator-3830qhfns-oleru.vercel.app",
+        "https://k12-slide-generator-hylejvhls-oleru.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
