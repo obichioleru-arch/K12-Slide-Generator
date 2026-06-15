@@ -2,7 +2,10 @@ import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API = "https://k12-slide-generator-api.onrender.com";
+// Use local FastAPI backend while running Vite locally; keep Render for deployed builds.
+const API = (import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "https://k12-slide-generator-api.onrender.com")
+).replace(/\/$/, "");
 const COLORS = ["#0D1B4B","#00B0F0","#E8192C","#FFC000","#C084FC","#6B7280"];
 const MANUAL = "__manual__";
 
@@ -67,332 +70,612 @@ const Badge=({connected, retrying})=>(
 const Num=({n})=><span className="step-num">{n}</span>;
 
 // ── Slide type metadata ───────────────────────────────────────────────────────
-// thumb: accurate SVG miniatures matching actual generated slide layouts
+// thumb: pixel-accurate SVG miniatures matching actual generated slide layouts
 const SLIDE_THUMB = {
-  // Cover: navy bg, decorative circles top-right, white title, cyan subtitle, red date pill, logo bottom-right
+
+  // ── COVER: navy bg, red top/bottom stripes, decorative circles top-right,
+  //          big white district title, cyan meeting type, italic subtitle,
+  //          red date pill bottom-left, EMC logo bottom-right
   "cover": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#0D1B4B"/>
-      {/* decorative circles top-right */}
-      <circle cx="148" cy="-2" r="38" fill="none" stroke="#1a2f6b" strokeWidth="10"/>
-      <circle cx="148" cy="-2" r="24" fill="none" stroke="#1a2f6b" strokeWidth="8"/>
-      {/* red top stripe */}
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      {/* title */}
-      <rect x="10" y="28" width="72" height="7" rx="1.5" fill="#ffffff"/>
-      {/* cyan subtitle */}
-      <rect x="10" y="40" width="50" height="4" rx="1" fill="#00B0F0"/>
-      {/* italic tagline */}
-      <rect x="10" y="48" width="36" height="2.5" rx="1" fill="#ffffff" opacity=".5"/>
+      {/* red top/bottom stripes */}
+      <rect x="0" y="0"  width="160" height="2.5" fill="#E8192C"/>
+      <rect x="0" y="87.5" width="160" height="2.5" fill="#E8192C"/>
+      {/* decorative concentric circles — top-right, semi-clipped */}
+      <circle cx="152" cy="0"  r="48" fill="none" stroke="#112060" strokeWidth="14"/>
+      <circle cx="152" cy="0"  r="30" fill="none" stroke="#112060" strokeWidth="10"/>
+      <circle cx="152" cy="0"  r="16" fill="none" stroke="#112060" strokeWidth="7"/>
+      {/* big district title */}
+      <rect x="10" y="24" width="78" height="9"   rx="2" fill="#ffffff"/>
+      {/* cyan meeting type */}
+      <rect x="10" y="37" width="54" height="5.5" rx="1" fill="#00B0F0"/>
+      {/* italic subtitle */}
+      <rect x="10" y="46" width="40" height="3"   rx="1" fill="#ffffff" opacity=".45"/>
       {/* red date pill */}
-      <rect x="10" y="55" width="22" height="7" rx="3.5" fill="#E8192C"/>
-      <rect x="14" y="57.5" width="14" height="2" rx="1" fill="#ffffff"/>
-      {/* EMC logo placeholder bottom-right - enlarged */}
-      <circle cx="146" cy="78" r="11" fill="none" stroke="#4a6fa5" strokeWidth="2.2"/>
-      <circle cx="146" cy="78" r="6.5" fill="none" stroke="#E8192C" strokeWidth="1.5"/>
+      <rect x="10" y="54" width="26" height="8"   rx="4" fill="#E8192C"/>
+      <rect x="14" y="57" width="18" height="2.5" rx="1" fill="#ffffff"/>
+      {/* EMC logo bottom-right: outer ring + inner red ring */}
+      <circle cx="147" cy="78" r="9"   fill="none" stroke="#2d4a8a" strokeWidth="2"/>
+      <circle cx="147" cy="78" r="5.5" fill="none" stroke="#E8192C"  strokeWidth="1.8"/>
+      <line   x1="138" y1="78" x2="156" y2="78" stroke="#2d4a8a" strokeWidth="1"/>
+      <line   x1="147" y1="69" x2="147" y2="87" stroke="#2d4a8a" strokeWidth="1"/>
     </svg>
   ),
 
-  // Mission: navy bg, circles, centered EMC globe icon, mission text
+  // ── MISSION: split-panel — left 52% is deep-blue panel with mission text
+  //             + red vertical bar on far left edge + EMC logo bottom-left;
+  //             right 48% is a photo placeholder (lighter navy)
   "mission": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <circle cx="148" cy="-2" r="38" fill="none" stroke="#1a2f6b" strokeWidth="10"/>
-      {/* large globe/circle icon center */}
-      <circle cx="58" cy="40" r="18" fill="none" stroke="#00B0F0" strokeWidth="2.5"/>
-      <ellipse cx="58" cy="40" rx="9" ry="18" fill="none" stroke="#00B0F0" strokeWidth="1.5"/>
-      <line x1="40" y1="40" x2="76" y2="40" stroke="#00B0F0" strokeWidth="1.5"/>
-      {/* text right side */}
-      <rect x="84" y="28" width="48" height="5" rx="1" fill="#fff" opacity=".9"/>
-      <rect x="84" y="36" width="56" height="3.5" rx="1" fill="#fff" opacity=".6"/>
-      <rect x="84" y="42" width="52" height="3.5" rx="1" fill="#fff" opacity=".6"/>
-      <rect x="84" y="48" width="44" height="3.5" rx="1" fill="#fff" opacity=".6"/>
-      {/* EMC logo placeholder left side */}
-      <circle cx="25" cy="78" r="12" fill="none" stroke="#4a6fa5" strokeWidth="2.5"/>
-      <circle cx="25" cy="78" r="7" fill="none" stroke="#E8192C" strokeWidth="1.8"/>
+      {/* right photo panel */}
+      <rect width="160" height="90" fill="#1e3a6e"/>
+      {/* left blue panel */}
+      <rect x="4" y="0" width="81" height="90" fill="#003DA5"/>
+      {/* red vertical bar on far left */}
+      <rect x="0" y="0" width="4" height="90" fill="#E8192C"/>
+      {/* red bottom bar on left panel */}
+      <rect x="4" y="87" width="81" height="3" fill="#E8192C"/>
+      {/* "Our Mission" label + underline */}
+      <rect x="12" y="10" width="28" height="3.5" rx="1" fill="#00B0F0"/>
+      <rect x="12" y="15" width="18" height="1.5" rx="0.5" fill="#E8192C"/>
+      {/* main mission text: "Every Learner On A Path To" */}
+      <rect x="12" y="20" width="66" height="7"   rx="1.5" fill="#ffffff"/>
+      <rect x="12" y="30" width="58" height="7"   rx="1.5" fill="#ffffff"/>
+      {/* "A Living Wage" in cyan */}
+      <rect x="12" y="40" width="56" height="7"   rx="1.5" fill="#00B0F0"/>
+      {/* subtext */}
+      <rect x="12" y="51" width="64" height="3"   rx="1" fill="#ffffff" opacity=".55"/>
+      {/* EMC logo bottom-left panel */}
+      <circle cx="22" cy="76" r="8"   fill="none" stroke="#2d5aad" strokeWidth="1.8"/>
+      <circle cx="22" cy="76" r="4.8" fill="none" stroke="#E8192C"  strokeWidth="1.4"/>
+      <line   x1="14" y1="76" x2="30" y2="76" stroke="#2d5aad" strokeWidth="0.8"/>
+      <line   x1="22" y1="68" x2="22" y2="84" stroke="#2d5aad" strokeWidth="0.8"/>
+      {/* right panel: faint photo placeholder text */}
+      <rect x="100" y="38" width="36" height="4" rx="1" fill="#ffffff" opacity=".1"/>
+      <rect x="108" y="45" width="20" height="3" rx="1" fill="#ffffff" opacity=".08"/>
+      {/* EMC logo overlay on photo, bottom-center */}
+      <circle cx="130" cy="76" r="7"   fill="rgba(0,0,0,.25)" />
+      <circle cx="130" cy="76" r="7"   fill="none" stroke="#ffffff" strokeWidth="1.2" opacity=".5"/>
     </svg>
   ),
 
-  // District Profile: navy header, 6 metric boxes in 2 rows
-  "district_profile": (
-    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="18" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="60" height="5" rx="1" fill="#fff" opacity=".9"/>
-      <rect x="6" y="12" width="40" height="3" rx="1" fill="#00B0F0" opacity=".7"/>
-      {/* 6 metric tiles 2x3 */}
-      {[0,1,2,3,4,5].map(i=>{
-        const col=i%3, row=Math.floor(i/3);
-        const colors=["#0D1B4B","#00B0F0","#FFC000","#E8192C","#0D1B4B","#16A34A"];
-        return(
-          <g key={i}>
-            <rect x={4+col*52} y={22+row*32} width="50" height="28" rx="2" fill={colors[i]} opacity=".85"/>
-            <rect x={8+col*52} y={28+row*32} width="22" height="7" rx="1" fill="#fff" opacity=".9"/>
-            <rect x={8+col*52} y={38+row*32} width="30" height="3" rx="1" fill="#fff" opacity=".5"/>
-          </g>
-        );
-      })}
-    </svg>
-  ),
-
-  // By the Numbers: 3 large circles with big numbers
-  "by_the_numbers": (
-    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="50" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {[28,80,132].map((cx,i)=>{
-        const fills=["#0D1B4B","#00B0F0","#FFC000"];
-        return(
-          <g key={i}>
-            <circle cx={cx} cy="58" r="24" fill={fills[i]} opacity=".15"/>
-            <circle cx={cx} cy="58" r="24" fill="none" stroke={fills[i]} strokeWidth="2.5"/>
-            <rect x={cx-14} y="52" width="28" height="7" rx="1" fill={fills[i]}/>
-            <rect x={cx-10} y="63" width="20" height="3" rx="1" fill="#6B7280"/>
-          </g>
-        );
-      })}
-    </svg>
-  ),
-
-  // HB3 Funds: vertical bars by class year, colored scale
-  "hb3_funds": (
-    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="60" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {/* bars */}
-      {[0,1,2,3,4].map(i=>{
-        const h=[30,40,50,38,55][i];
-        const fills=["#334155","#0D1B4B","#0D1B4B","#00B0F0","#FFC000"];
-        return(
-          <g key={i}>
-            <rect x={16+i*28} y={82-h} width="20" height={h} rx="2" fill={fills[i]} opacity=".85"/>
-            <rect x={18+i*28} y={85-h} width="12" height="4" rx="1" fill="#fff" opacity=".7"/>
-          </g>
-        );
-      })}
-      <line x1="8" y1="82" x2="152" y2="82" stroke="#9CA3AF" strokeWidth="1"/>
-      {/* year labels */}
-      {[0,1,2,3,4].map(i=>(
-        <rect key={i} x={18+i*28} y="84" width="14" height="3" rx="1" fill="#9CA3AF"/>
-      ))}
-    </svg>
-  ),
-
-  // TSI Status Trends: dual line chart over years
+  // ── TSI STATUS TRENDS: white bg, navy top bar, centered header,
+  //    gradient divider, stacked column chart (Met/Approaches/Not-Met) by year
   "tsi_status_trends": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="60" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {/* grid lines */}
-      {[0,1,2,3].map(i=>(
-        <line key={i} x1="18" y1={28+i*14} x2="152" y2={28+i*14} stroke="#E5E7EB" strokeWidth="0.8"/>
-      ))}
-      {/* ELAR line - dark navy */}
-      <polyline points="18,72 44,58 70,50 96,44 122,36 148,28" fill="none" stroke="#0D1B4B" strokeWidth="2.5"/>
-      {[18,44,70,96,122,148].map((x,i)=>(
-        <circle key={i} cx={x} cy={[72,58,50,44,36,28][i]} r="3" fill="#0D1B4B"/>
-      ))}
-      {/* Math line - cyan */}
-      <polyline points="18,78 44,68 70,62 96,58 122,52 148,46" fill="none" stroke="#00B0F0" strokeWidth="2.5"/>
-      {[18,44,70,96,122,148].map((x,i)=>(
-        <circle key={i} cx={x} cy={[78,68,62,58,52,46][i]} r="3" fill="#00B0F0"/>
-      ))}
-      <line x1="18" y1="80" x2="152" y2="80" stroke="#9CA3AF" strokeWidth="1"/>
-      {/* legend */}
-      <rect x="20" y="84" width="8" height="2" rx="1" fill="#0D1B4B"/>
-      <rect x="20" y="88" width="20" height="2" rx="1" fill="#E5E7EB"/>
-      <rect x="55" y="84" width="8" height="2" rx="1" fill="#00B0F0"/>
-      <rect x="55" y="88" width="20" height="2" rx="1" fill="#E5E7EB"/>
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="28" y="7"  width="104" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
+      {/* gradient divider */}
+      <defs>
+        <linearGradient id="divTSI" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="21" width="148" height="1.5" fill="url(#divTSI)"/>
+      {/* stacked bars: 5 year-groups, 3 series each */}
+      {[0,1,2,3,4].map(i=>{
+        const met=[32,38,45,50,56][i];
+        const app=[18,16,14,13,12][i];
+        const notm=30-met+18-app;
+        const x=16+i*28; const bw=18; const base=83;
+        return(
+          <g key={i}>
+            {/* Not Met (top) */}
+            <rect x={x} y={base-met-app-notm+10} width={bw} height={notm}    rx="1" fill="#D1D5DB"/>
+            {/* Approaches (mid) */}
+            <rect x={x} y={base-met-app+10}       width={bw} height={app}    rx="1" fill="#93C5FD"/>
+            {/* Met (bottom) */}
+            <rect x={x} y={base-met+10}            width={bw} height={met}   rx="1" fill="#0D1B4B"/>
+            {/* year label */}
+            <rect x={x+1} y="85" width={bw-2} height="2.5" rx="1" fill="#9CA3AF"/>
+          </g>
+        );
+      })}
+      {/* baseline */}
+      <line x1="8" y1="83" x2="152" y2="83" stroke="#E5E7EB" strokeWidth="1"/>
+      {/* legend row */}
+      <rect x="8"  y="88.5" width="7" height="3" rx="1" fill="#0D1B4B"/>
+      <rect x="16" y="89"   width="14" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="36" y="88.5" width="7" height="3" rx="1" fill="#93C5FD"/>
+      <rect x="44" y="89"   width="22" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="72" y="88.5" width="7" height="3" rx="1" fill="#D1D5DB"/>
+      <rect x="80" y="89"   width="18" height="2" rx="1" fill="#E5E7EB"/>
     </svg>
   ),
 
-  // TSI Status: horizontal stacked bars by campus
+  // ── TSI STATUS (by campus): white bg, navy top bar, centered header,
+  //    stacked horizontal bars (Met navy / Approaches cyan / Not Met gray)
   "tsi_status": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="55" height="4.5" rx="1" fill="#fff" opacity=".9"/>
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="26" y="7"  width="108" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
+      <defs>
+        <linearGradient id="divTSIs" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="21" width="148" height="1.5" fill="url(#divTSIs)"/>
+      {/* 5 campus rows */}
       {[0,1,2,3,4].map(i=>{
-        const w1=[55,48,62,40,70][i];
-        const w2=[25,30,20,35,18][i];
+        const met=[62,54,70,47,75][i];
+        const app=[16,20,14,23,12][i];
+        const notm=100-met-app;
+        const bStart=42; const bLen=110; const y=25+i*12;
         return(
           <g key={i}>
-            <rect x="38" y={21+i*13} width={w1} height="9" rx="1" fill="#0D1B4B" opacity=".8"/>
-            <rect x={38+w1} y={21+i*13} width={w2} height="9" rx="1" fill="#00B0F0" opacity=".8"/>
-            <rect x={38+w1+w2} y={21+i*13} width={80-w1-w2} height="9" rx="1" fill="#E5E7EB"/>
-            <rect x="4" y={23+i*13} width="30" height="5" rx="1" fill="#9CA3AF"/>
+            {/* campus label */}
+            <rect x="4" y={y+1} width="34" height="6" rx="1" fill="#E5E7EB"/>
+            {/* Met */}
+            <rect x={bStart}               y={y} width={bLen*met/100}  height="8" rx="1" fill="#0D1B4B" opacity=".85"/>
+            {/* Approaches */}
+            <rect x={bStart+bLen*met/100}  y={y} width={bLen*app/100}  height="8" rx="1" fill="#93C5FD" opacity=".9"/>
+            {/* Not Met */}
+            <rect x={bStart+bLen*(met+app)/100} y={y} width={bLen*notm/100} height="8" rx="1" fill="#D1D5DB"/>
           </g>
         );
       })}
+      {/* legend */}
+      <rect x="8"  y="87" width="7" height="3" rx="1" fill="#0D1B4B" opacity=".85"/>
+      <rect x="16" y="87.5" width="10" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="32" y="87" width="7" height="3" rx="1" fill="#93C5FD" opacity=".9"/>
+      <rect x="40" y="87.5" width="18" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="64" y="87" width="7" height="3" rx="1" fill="#D1D5DB"/>
+      <rect x="72" y="87.5" width="14" height="2" rx="1" fill="#E5E7EB"/>
     </svg>
   ),
 
-  // TSI Leaderboard: ranked horizontal bars longest→shortest
+  // ── TSI LEADERBOARD: white bg, ranked horizontal bars (gold #1, navy rest),
+  //    campus labels left, percent labels inside bars
   "tsi_leaderboard": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="55" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {[100,88,74,62,50,40].map((w,i)=>(
-        <g key={i}>
-          <rect x="36" y={20+i*11} width={w} height="8" rx="1"
-            fill={i===0?"#FFC000":"#0D1B4B"} opacity={i===0?1:0.85-i*0.1}/>
-          <rect x="36" y={20+i*11} width={w} height="8" rx="1" fill="none"
-            stroke={i===0?"#D97706":"transparent"} strokeWidth="0.5"/>
-          <rect x="4" y={22+i*11} width="28" height="4" rx="1" fill="#9CA3AF"/>
-          {/* percent label inside bar */}
-          <rect x={36+w-18} y={22+i*11} width="14" height="4" rx="1" fill="#fff" opacity=".6"/>
-        </g>
-      ))}
-    </svg>
-  ),
-
-  // CCMR All Qualifiers: grouped/stacked horizontal bars per qualifier type
-  "ccmr_pathway_full": (
-    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="60" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {[0,1,2,3,4,5,6].map(i=>{
-        const w=[90,70,55,80,45,60,35][i];
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="10" y="7"  width="140" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="40" y="15" width="80"  height="3.5" rx="1"   fill="#00B0F0"/>
+      <defs>
+        <linearGradient id="divLB" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="22" width="148" height="1.5" fill="url(#divLB)"/>
+      {/* ranked bars */}
+      {[1,0.88,0.76,0.64,0.53,0.43].map((pct,i)=>{
+        const maxW=108; const y=26+i*11;
+        const isFirst=i===0;
         return(
           <g key={i}>
-            <rect x="42" y={19+i*10} width={w} height="7" rx="1"
-              fill={i%2===0?"#0D1B4B":"#00B0F0"} opacity=".75"/>
-            <rect x="4" y={20+i*10} width="34" height="5" rx="1" fill="#E5E7EB"/>
+            {/* campus label */}
+            <rect x="4" y={y+1} width="32" height="6" rx="1" fill="#E5E7EB"/>
+            {/* bar */}
+            <rect x="40" y={y} width={maxW*pct} height="8" rx="1.5"
+              fill={isFirst?"#FFC000":"#0D1B4B"}
+              opacity={isFirst?1:0.9-i*0.08}/>
+            {/* border for gold bar */}
+            {isFirst&&<rect x="40" y={y} width={maxW*pct} height="8" rx="1.5" fill="none" stroke="#D97706" strokeWidth="0.7"/>}
+            {/* % label inside bar */}
+            <rect x={40+maxW*pct-20} y={y+2} width="16" height="4" rx="1" fill="#ffffff" opacity=".6"/>
           </g>
         );
       })}
     </svg>
   ),
 
-  // CCMR YOY Breakdown: grouped vertical bars (3 groups × 3 series)
+  // ── CCMR YOY BREAKDOWN: white bg, grouped vertical bars (3 colors × 3–4 years)
   "ccmr_yoy_breakdown": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="60" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {[0,1,2].map(gi=>(
-        <g key={gi}>
-          {[[35,"#FFC000"],[46,"#00B0F0"],[55,"#0D1B4B"]].map(([h,c],i)=>(
-            <rect key={i} x={14+gi*48+i*12} y={82-h} width="10" height={h} rx="1.5"
-              fill={c} opacity=".85"/>
-          ))}
-        </g>
-      ))}
-      <line x1="8" y1="82" x2="152" y2="82" stroke="#9CA3AF" strokeWidth="1"/>
-      {/* x-axis year labels */}
-      {[0,1,2].map(i=>(
-        <rect key={i} x={18+i*48} y="84" width="20" height="3" rx="1" fill="#E5E7EB"/>
-      ))}
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="30" y="7"  width="100" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
+      <defs>
+        <linearGradient id="divCCMR" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="22" width="148" height="1.5" fill="url(#divCCMR)"/>
+      {/* 4 year-groups × 3 bars */}
+      {[0,1,2,3].map(gi=>{
+        const heights=[[30,20,40],[36,24,46],[42,28,52],[47,32,56]][gi];
+        const colors=["#FFC000","#00B0F0","#0D1B4B"];
+        const gx=14+gi*36;
+        return(
+          <g key={gi}>
+            {heights.map((h,i)=>(
+              <rect key={i} x={gx+i*11} y={83-h} width="9" height={h} rx="1.5"
+                fill={colors[i]} opacity=".88"/>
+            ))}
+            {/* year label */}
+            <rect x={gx+3} y="85" width="22" height="3" rx="1" fill="#E5E7EB"/>
+          </g>
+        );
+      })}
+      <line x1="8" y1="83" x2="152" y2="83" stroke="#E5E7EB" strokeWidth="1"/>
+      {/* legend */}
+      <rect x="8"  y="89" width="7" height="3" rx="1" fill="#FFC000"/>
+      <rect x="16" y="89.5" width="12" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="32" y="89" width="7" height="3" rx="1" fill="#00B0F0"/>
+      <rect x="40" y="89.5" width="10" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="54" y="89" width="7" height="3" rx="1" fill="#0D1B4B"/>
+      <rect x="62" y="89.5" width="8" height="2" rx="1" fill="#E5E7EB"/>
     </svg>
   ),
 
-  // CCMR A-F Status: donut chart + legend
+  // ── CCMR A-F STATUS: white bg, navy left sidebar (logo + label + goal + count),
+  //    right side: title + progress cards (Met green / Approaches yellow / Not Met red)
   "ccmr_af_status": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="55" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {/* donut */}
-      <circle cx="50" cy="56" r="24" fill="none" stroke="#E5E7EB" strokeWidth="12"/>
-      <circle cx="50" cy="56" r="24" fill="none" stroke="#16A34A" strokeWidth="12"
-        strokeDasharray="90.5 30.2" strokeDashoffset="23.6" strokeLinecap="round"/>
-      <circle cx="50" cy="56" r="24" fill="none" stroke="#FFC000" strokeWidth="12"
-        strokeDasharray="22.6 98.1" strokeDashoffset="-66.9" strokeLinecap="round"/>
-      <circle cx="50" cy="56" r="24" fill="none" stroke="#E8192C" strokeWidth="12"
-        strokeDasharray="7.5 113.2" strokeDashoffset="-89.5" strokeLinecap="round"/>
-      {/* percent in center */}
-      <circle cx="50" cy="56" r="13" fill="#F8FAFC"/>
-      <rect x="40" y="52" width="20" height="6" rx="1" fill="#0D1B4B"/>
-      <rect x="42" y="61" width="16" height="3" rx="1" fill="#9CA3AF"/>
-      {/* legend */}
-      {[["#16A34A","Met"],["#FFC000","Approaches"],["#E8192C","Not Met"]].map(([c,_],i)=>(
-        <g key={i}>
-          <rect x="86" y={24+i*18} width="8" height="8" rx="1" fill={c}/>
-          <rect x="98" y={26+i*18} width="36" height="4" rx="1" fill="#374151"/>
-          <rect x="98" y={32+i*18} width="24" height="3" rx="1" fill="#9CA3AF"/>
-        </g>
-      ))}
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* navy left sidebar */}
+      <rect x="0" y="0" width="44" height="90" fill="#0D1B4B"/>
+      {/* logo in sidebar */}
+      <circle cx="22" cy="12" r="7"   fill="none" stroke="#2d5aad" strokeWidth="1.5"/>
+      <circle cx="22" cy="12" r="4.2" fill="none" stroke="#E8192C"  strokeWidth="1.2"/>
+      {/* sidebar labels */}
+      <rect x="6"  y="22" width="32" height="3.5" rx="1" fill="#00B0F0" opacity=".7"/>
+      <rect x="6"  y="28" width="28" height="5"   rx="1" fill="#ffffff"/>
+      <rect x="6"  y="36" width="22" height="3"   rx="1" fill="#ffffff" opacity=".5"/>
+      {/* CCMR GOAL box */}
+      <rect x="4" y="44" width="36" height="16" rx="2" fill="rgba(255,255,255,.08)"/>
+      <rect x="8" y="47" width="20" height="3"  rx="1" fill="#00B0F0" opacity=".7"/>
+      <rect x="8" y="52" width="24" height="5"  rx="1" fill="#FFC000"/>
+      {/* TOTAL STUDENTS box */}
+      <rect x="4" y="63" width="36" height="16" rx="2" fill="rgba(255,255,255,.08)"/>
+      <rect x="8" y="66" width="24" height="3"  rx="1" fill="#00B0F0" opacity=".7"/>
+      <rect x="8" y="71" width="28" height="5"  rx="1" fill="#ffffff"/>
+      {/* right content title */}
+      <rect x="50" y="8"  width="100" height="5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="50" y="16" width="76"  height="3" rx="1"   fill="#4B5563"/>
+      {/* divider */}
+      <defs>
+        <linearGradient id="divAF" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="70%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="48" y="22" width="108" height="1.5" fill="url(#divAF)"/>
+      {/* Met card (green) */}
+      <rect x="50" y="25" width="32" height="28" rx="2" fill="#F0FDF4" stroke="#16A34A" strokeWidth="1.2"/>
+      <rect x="55" y="30" width="22" height="3"  rx="1" fill="#16A34A"/>
+      <rect x="55" y="36" width="18" height="7"  rx="1" fill="#16A34A"/>
+      <rect x="55" y="45" width="20" height="3"  rx="1" fill="#16A34A" opacity=".5"/>
+      {/* Approaches card (yellow) */}
+      <rect x="87" y="25" width="32" height="28" rx="2" fill="#FFFBEB" stroke="#FFC000" strokeWidth="1.2"/>
+      <rect x="92" y="30" width="22" height="3"  rx="1" fill="#D97706"/>
+      <rect x="92" y="36" width="18" height="7"  rx="1" fill="#FFC000"/>
+      <rect x="92" y="45" width="20" height="3"  rx="1" fill="#D97706" opacity=".5"/>
+      {/* Not Met card (red) */}
+      <rect x="124" y="25" width="32" height="28" rx="2" fill="#FEF2F2" stroke="#E8192C" strokeWidth="1.2"/>
+      <rect x="129" y="30" width="22" height="3"  rx="1" fill="#E8192C"/>
+      <rect x="129" y="36" width="18" height="7"  rx="1" fill="#E8192C"/>
+      <rect x="129" y="45" width="20" height="3"  rx="1" fill="#E8192C" opacity=".5"/>
+      {/* progress bars below cards */}
+      <rect x="50"  y="58" width="106" height="3" rx="1" fill="#E5E7EB"/>
+      <rect x="50"  y="58" width="72"  height="3" rx="1" fill="#16A34A" opacity=".7"/>
     </svg>
   ),
 
-  // CCMR Pathway Analysis: stacked bar comparing on/off pathway
+  // ── CCMR PATHWAY ANALYSIS: white bg, red alert box left (NOT ON PATHWAY count),
+  //    right side: pathway breakdown bars (stacked per-pathway)
   "ccmr_pathway": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="55" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {[0,1,2,3].map(i=>{
-        const pct=[0.72,0.61,0.55,0.80][i];
-        const total=60;
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="6"  y="7"  width="60" height="3.5" rx="1" fill="#E8192C"/>
+      <rect x="6"  y="13" width="50" height="5"   rx="1" fill="#0D1B4B"/>
+      <rect x="6"  y="20" width="70" height="3"   rx="1" fill="#4B5563" opacity=".6"/>
+      <defs>
+        <linearGradient id="divCP" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="25" width="148" height="1.5" fill="url(#divCP)"/>
+      {/* left red alert box */}
+      <rect x="6" y="29" width="36" height="54" rx="3" fill="#E8192C"/>
+      {/* ! icon */}
+      <circle cx="24" cy="37" r="5" fill="rgba(255,255,255,.25)"/>
+      <rect x="22.5" y="33.5" width="3" height="5"  rx="1" fill="#ffffff"/>
+      <rect x="22.5" y="40"   width="3" height="3"  rx="1" fill="#ffffff"/>
+      {/* big count */}
+      <rect x="10" y="44" width="28" height="9" rx="2" fill="#ffffff" opacity=".9"/>
+      {/* label */}
+      <rect x="10" y="56" width="28" height="3" rx="1" fill="#ffffff" opacity=".7"/>
+      <rect x="10" y="61" width="28" height="3" rx="1" fill="#ffffff" opacity=".7"/>
+      {/* % badge */}
+      <rect x="12" y="67" width="24" height="5" rx="2.5" fill="rgba(255,255,255,.2)"/>
+      <rect x="15" y="68.5" width="18" height="2" rx="1" fill="#ffffff" opacity=".8"/>
+      {/* right pathway bars */}
+      {[0,1,2,3,4,5].map(i=>{
+        const barW=[80,64,72,50,58,42][i];
+        const y=29+i*9;
+        const colors=["#0D1B4B","#00B0F0","#0D1B4B","#00B0F0","#FFC000","#0D1B4B"];
         return(
           <g key={i}>
-            <rect x="38" y={20+i*16} width={total*pct} height="11" rx="1.5" fill="#0D1B4B" opacity=".85"/>
-            <rect x={38+total*pct} y={20+i*16} width={total*(1-pct)} height="11" rx="1.5" fill="#00B0F0" opacity=".7"/>
-            <rect x="4" y={22+i*16} width="30" height="7" rx="1" fill="#E5E7EB"/>
+            <rect x="46" y={y} width="52" height="7" rx="1" fill="#0D1B4B" opacity=".1"/>
+            <rect x="46" y={y} width={barW*0.82} height="7" rx="1" fill={colors[i]} opacity=".8"/>
+            <rect x="100" y={y+1} width="54" height="5" rx="1" fill="#E5E7EB" opacity=".4"/>
+            <rect x="100" y={y+1} width="32" height="5" rx="1" fill={colors[i]} opacity=".35"/>
+          </g>
+        );
+      })}
+    </svg>
+  ),
+
+  // ── CCMR ALL QUALIFIERS: white bg, horizontal bars grouped by qualifier type
+  "ccmr_pathway_full": (
+    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="10" y="7"  width="140" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="40" y="15" width="80"  height="3.5" rx="1"   fill="#00B0F0"/>
+      <defs>
+        <linearGradient id="divPF" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="22" width="148" height="1.5" fill="url(#divPF)"/>
+      {/* qualifier rows with two bars side-by-side (campus % + % of CCMR-met) */}
+      {[0,1,2,3,4,5,6].map(i=>{
+        const w1=[90,74,58,82,48,64,38][i];
+        const w2=[w1*0.65,w1*0.72,w1*0.58,w1*0.80,w1*0.50,w1*0.62,w1*0.45].map(v=>Math.round(v))[i];
+        const colors=["#0D1B4B","#00B0F0","#0D1B4B","#00B0F0","#FFC000","#0D1B4B","#00B0F0"];
+        return(
+          <g key={i}>
+            {/* label */}
+            <rect x="4"  y={25+i*9} width="38" height="6" rx="1" fill="#E5E7EB"/>
+            {/* main bar */}
+            <rect x="46" y={25+i*9} width={w1*0.95} height="6" rx="1" fill={colors[i]} opacity=".75"/>
+            {/* secondary bar (lighter) */}
+            <rect x="46" y={25+i*9} width={w2*0.95} height="6" rx="1" fill={colors[i]} opacity=".4"/>
+          </g>
+        );
+      })}
+    </svg>
+  ),
+
+  // ── DISTRICT PROFILE: white bg, navy top bar + title,
+  //    5 metric columns each with stacked mini bars (3 years)
+  "district_profile": (
+    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header row */}
+      <rect x="6"  y="7"  width="110" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="6"  y="15" width="50"  height="3"   rx="1"   fill="#00B0F0"/>
+      <rect x="138" y="8" width="18"  height="4"   rx="1"   fill="#6B7280" opacity=".4"/>
+      {/* color legend row */}
+      <rect x="6"  y="20" width="7" height="4" rx="1" fill="#93C5FD"/>
+      <rect x="15" y="21" width="16" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="34" y="20" width="7" height="4" rx="1" fill="#1D4ED8"/>
+      <rect x="43" y="21" width="16" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="62" y="20" width="7" height="4" rx="1" fill="#0D1B4B"/>
+      <rect x="71" y="21" width="16" height="2" rx="1" fill="#E5E7EB"/>
+      <defs>
+        <linearGradient id="divDP" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="26" width="148" height="1.5" fill="url(#divDP)"/>
+      {/* 5 column tiles with borders */}
+      {[0,1,2,3,4].map(col=>{
+        const x=6+col*30; const tileW=28;
+        const labelH=[32,28,42,38,35][col];
+        const barH1=[labelH*0.72,labelH*0.60,labelH*0.75,labelH*0.68,labelH*0.55].map(v=>Math.round(v))[col];
+        const barH2=[labelH*0.50,labelH*0.44,labelH*0.60,labelH*0.52,labelH*0.42].map(v=>Math.round(v))[col];
+        const barH3=labelH;
+        return(
+          <g key={col}>
+            {/* tile border */}
+            <rect x={x} y="30" width={tileW} height="56" rx="2" fill="#F9FAFB" stroke="#9CA3AF" strokeWidth="1.2"/>
+            {/* column title */}
+            <rect x={x+3} y="33" width={tileW-6} height="7" rx="1" fill="#0D1B4B" opacity=".8"/>
+            {/* 3-bar mini chart */}
+            {/* bar 2023 (lightest) */}
+            <rect x={x+4}    y={88-barH1}   width="6" height={barH1}   rx="1" fill="#93C5FD"/>
+            {/* bar 2024 */}
+            <rect x={x+12}   y={88-barH2}   width="6" height={barH2}   rx="1" fill="#1D4ED8"/>
+            {/* bar 2025 (darkest) */}
+            <rect x={x+20}   y={88-barH3}   width="6" height={barH3}   rx="1" fill="#0D1B4B"/>
+            {/* baseline */}
+            <line x1={x+2} y1="85" x2={x+tileW-2} y2="85" stroke="#D1D5DB" strokeWidth="0.8"/>
+          </g>
+        );
+      })}
+    </svg>
+  ),
+
+  // ── POSTSECONDARY ENROLLMENT: white bg, stacked horizontal bars (4YR/2YR/Not)
+  "postsecondary_enrollment": (
+    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="18" y="7"  width="124" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
+      <defs>
+        <linearGradient id="divPSE" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="22" width="148" height="1.5" fill="url(#divPSE)"/>
+      {/* 5 campus rows */}
+      {[0,1,2,3,4].map(i=>{
+        const p4=[0.50,0.44,0.37,0.57,0.33][i];
+        const p2=[0.18,0.20,0.24,0.14,0.26][i];
+        const pN=1-p4-p2;
+        const bStart=42; const bLen=112; const y=25+i*12;
+        return(
+          <g key={i}>
+            <rect x="4" y={y+1} width="34" height="7" rx="1" fill="#E5E7EB"/>
+            {/* 4YR */}
+            <rect x={bStart}                  y={y} width={bLen*p4}  height="9" rx="1" fill="#0D1B4B" opacity=".85"/>
+            {/* 2YR */}
+            <rect x={bStart+bLen*p4}          y={y} width={bLen*p2}  height="9" rx="1" fill="#00B0F0" opacity=".85"/>
+            {/* Not Enrolled */}
+            <rect x={bStart+bLen*(p4+p2)}     y={y} width={bLen*pN}  height="9" rx="1" fill="#E5E7EB"/>
           </g>
         );
       })}
       {/* legend */}
-      <rect x="8" y="85" width="8" height="4" rx="1" fill="#0D1B4B" opacity=".85"/>
-      <rect x="20" y="86" width="22" height="3" rx="1" fill="#9CA3AF"/>
-      <rect x="55" y="85" width="8" height="4" rx="1" fill="#00B0F0" opacity=".7"/>
-      <rect x="67" y="86" width="22" height="3" rx="1" fill="#9CA3AF"/>
+      <rect x="8"  y="87" width="7" height="3" rx="1" fill="#0D1B4B" opacity=".85"/>
+      <rect x="16" y="87.5" width="10" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="30" y="87" width="7" height="3" rx="1" fill="#00B0F0" opacity=".85"/>
+      <rect x="38" y="87.5" width="8" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="50" y="87" width="7" height="3" rx="1" fill="#D1D5DB"/>
+      <rect x="58" y="87.5" width="20" height="2" rx="1" fill="#E5E7EB"/>
     </svg>
   ),
 
-  // Postsecondary Enrollment: horizontal bars by school (4YR, 2YR breakdown)
-  "postsecondary_enrollment": (
+  // ── HB3 OUTCOMES BONUS: white bg, left chart (bars by class year),
+  //    right sidebar (total funding card + breakdown)
+  "hb3_funds": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#F8FAFC"/>
-      <rect width="160" height="16" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <rect x="6" y="5" width="68" height="4.5" rx="1" fill="#fff" opacity=".9"/>
-      {[0,1,2,3,4].map(i=>{
-        const w4=[55,48,40,62,36][i];
-        const w2=[20,22,26,15,28][i];
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* header */}
+      <rect x="6"  y="7"  width="50"  height="3.5" rx="1" fill="#00B0F0"/>
+      <rect x="6"  y="13" width="90"  height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="6"  y="21" width="50"  height="3.5" rx="1" fill="#00B0F0" opacity=".6"/>
+      <defs>
+        <linearGradient id="divHB3" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="60%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="27" width="148" height="1.5" fill="url(#divHB3)"/>
+      {/* left chart: grouped bars per class year, Eco-Dis / Non-Eco-Dis */}
+      {[0,1,2,3].map(gi=>{
+        const hEco=[30,38,44,50][gi];
+        const hNon=[20,26,30,36][gi];
+        const x=10+gi*32;
+        return(
+          <g key={gi}>
+            <rect x={x}    y={84-hEco} width="12" height={hEco} rx="1.5" fill="#0D1B4B" opacity=".85"/>
+            <rect x={x+14} y={84-hNon} width="12" height={hNon} rx="1.5" fill="#00B0F0" opacity=".85"/>
+            <rect x={x+2}  y="86" width="22" height="3" rx="1" fill="#E5E7EB"/>
+          </g>
+        );
+      })}
+      <line x1="8" y1="84" x2="138" y2="84" stroke="#E5E7EB" strokeWidth="1"/>
+      {/* right sidebar */}
+      <rect x="142" y="30" width="14" height="4"  rx="1" fill="#00B0F0" opacity=".7"/>
+      <rect x="142" y="37" width="14" height="8"  rx="1" fill="#0D1B4B"/>
+      <rect x="142" y="48" width="14" height="3"  rx="1" fill="#9CA3AF"/>
+      <rect x="142" y="54" width="14" height="14" rx="2" fill="#FFC000" opacity=".2" stroke="#FFC000" strokeWidth="1"/>
+      <rect x="143" y="57" width="12" height="3"  rx="1" fill="#FFC000"/>
+      <rect x="143" y="62" width="10" height="3"  rx="1" fill="#D97706" opacity=".6"/>
+      {/* legend */}
+      <rect x="8"  y="89" width="7" height="3" rx="1" fill="#0D1B4B" opacity=".85"/>
+      <rect x="16" y="89.5" width="20" height="2" rx="1" fill="#E5E7EB"/>
+      <rect x="42" y="89" width="7" height="3" rx="1" fill="#00B0F0" opacity=".85"/>
+      <rect x="50" y="89.5" width="22" height="2" rx="1" fill="#E5E7EB"/>
+    </svg>
+  ),
+
+  // ── BY THE NUMBERS: white bg, red eyebrow + big title,
+  //    3 circles (navy / cyan / yellow) each with large count inside
+  "by_the_numbers": (
+    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
+      <rect width="160" height="90" fill="#ffffff"/>
+      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      {/* eyebrow */}
+      <rect x="26" y="8"  width="108" height="3.5" rx="1"   fill="#E8192C"/>
+      {/* big title */}
+      <rect x="22" y="14" width="116" height="7"   rx="2"   fill="#0D1B4B"/>
+      {/* gradient divider */}
+      <defs>
+        <linearGradient id="divBTN" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="transparent"/>
+          <stop offset="35%"  stopColor="#0D1B4B"/>
+          <stop offset="65%"  stopColor="#00B0F0"/>
+          <stop offset="100%" stopColor="transparent"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="24" width="148" height="1.5" fill="url(#divBTN)"/>
+      {/* 3 metric circles */}
+      {[28,80,132].map((cx,i)=>{
+        const outer=[24,24,24][i];
+        const fills=["#0D1B4B","#00B0F0","#FFC000"];
+        const rings=["#E5E7EB","#DBEAFE","#FEF9C3"];
         return(
           <g key={i}>
-            <rect x="38" y={19+i*13} width={w4} height="9" rx="1" fill="#0D1B4B" opacity=".85"/>
-            <rect x={38+w4} y={19+i*13} width={w2} height="9" rx="1" fill="#00B0F0" opacity=".8"/>
-            <rect x={38+w4+w2} y={19+i*13} width={110-w4-w2} height="9" rx="1" fill="#E5E7EB" opacity=".5"/>
-            <rect x="4" y={21+i*13} width="30" height="5" rx="1" fill="#E5E7EB"/>
+            {/* outer ring decoration (dashed arc style) */}
+            <circle cx={cx} cy="58" r={outer+3} fill="none" stroke="#00B0F0"
+              strokeWidth="1.5" strokeDasharray={[`${3.14*2*(outer+3)*0.8}`,`${3.14*2*(outer+3)*0.2}`][0]}
+              opacity=".4"/>
+            {/* colored ring */}
+            <circle cx={cx} cy="58" r={outer} fill={rings[i]} stroke={fills[i]} strokeWidth="2.5"/>
+            {/* filled inner bg */}
+            <circle cx={cx} cy="58" r={outer-4} fill={fills[i]}/>
+            {/* count placeholder */}
+            <rect x={cx-12} y="52" width="24" height="7" rx="1.5" fill="#ffffff" opacity=".9"/>
+            {/* icon badge bottom-left */}
+            <circle cx={cx-outer+4} cy={58+outer-4} r="5" fill="#E8192C"/>
+            {/* label below circle */}
+            <rect x={cx-18} y="85" width="36" height="3" rx="1" fill="#E5E7EB"/>
           </g>
         );
       })}
     </svg>
   ),
 
-  // Outro: same layout as cover but with thank-you focus
+  // ── OUTRO / THANK YOU: navy bg, red top/bottom stripes, large decorative circles,
+  //    centered "Thank You" title, EMC sub-label, mission tagline
   "outro": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#0D1B4B"/>
-      <rect x="0" y="0" width="160" height="2.5" fill="#E8192C"/>
-      <circle cx="148" cy="-2" r="38" fill="none" stroke="#1a2f6b" strokeWidth="10"/>
-      <circle cx="148" cy="-2" r="24" fill="none" stroke="#1a2f6b" strokeWidth="8"/>
-      <rect x="10" y="30" width="60" height="6" rx="1.5" fill="#ffffff"/>
-      <rect x="10" y="40" width="42" height="3.5" rx="1" fill="#00B0F0"/>
-      <rect x="10" y="47" width="50" height="2.5" rx="1" fill="#ffffff" opacity=".4"/>
-      {/* globe icon */}
-      <circle cx="148" cy="80" r="7" fill="none" stroke="#4a6fa5" strokeWidth="1.5"/>
-      <circle cx="148" cy="80" r="4" fill="none" stroke="#E8192C" strokeWidth="1"/>
+      {/* red top/bottom stripes */}
+      <rect x="0" y="0"    width="160" height="2.5" fill="#E8192C"/>
+      <rect x="0" y="87.5" width="160" height="2.5" fill="#E8192C"/>
+      {/* large decorative circles (left, right, center) */}
+      <circle cx="16"  cy="45" r="42" fill="none" stroke="#112060" strokeWidth="18"/>
+      <circle cx="144" cy="45" r="42" fill="none" stroke="#112060" strokeWidth="18"/>
+      <circle cx="80"  cy="45" r="28" fill="none" stroke="#1e1e5a" strokeWidth="12"/>
+      {/* EMC label */}
+      <rect x="52" y="22" width="56" height="3.5" rx="1" fill="#00B0F0" opacity=".8"/>
+      {/* "Thank You" big title */}
+      <rect x="26" y="29" width="108" height="11"  rx="2.5" fill="#ffffff"/>
+      {/* red divider line */}
+      <rect x="68" y="44" width="24" height="2" rx="1" fill="#E8192C"/>
+      {/* tagline */}
+      <rect x="34" y="50" width="92" height="3" rx="1" fill="#ffffff" opacity=".35"/>
+      {/* EMC logo bottom-center */}
+      <circle cx="80" cy="72" r="9"   fill="none" stroke="#2d4a8a" strokeWidth="2"/>
+      <circle cx="80" cy="72" r="5.5" fill="none" stroke="#E8192C"  strokeWidth="1.8"/>
+      <line   x1="71" y1="72" x2="89" y2="72" stroke="#2d4a8a" strokeWidth="1"/>
+      <line   x1="80" y1="63" x2="80" y2="81" stroke="#2d4a8a" strokeWidth="1"/>
     </svg>
   ),
+
 };
 
 const SLIDE_INFO = {
