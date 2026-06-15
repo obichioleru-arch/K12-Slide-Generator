@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# Backend uploads/outputs (user data — never commit)
+district-slide-tool/backend/uploads/
+district-slide-tool/backend/outputs/
+
+# Node
+node_modules/
+dist/
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
