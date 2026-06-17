@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import "./App.css";
+import emcLandingLogo from "./assets/emc_landing_logo.png";
 
 // Use local FastAPI backend while running Vite locally; keep Render for deployed builds.
 const API = (import.meta.env.VITE_API_URL ||
@@ -695,8 +696,39 @@ const SLIDE_INFO = {
   "postsecondary_enrollment":{name:"Postsecondary Enrollment",icon:"🏫",desc:"College enrollment rates (4YR, 2YR, etc.) by school", needsData:true},
 };
 
+const DISTRICT_OPTIONS = [
+  "Aldine ISD",
+  "Crowley ISD",
+  "Cedar Hill ISD",
+  "Corpus Christi ISD",
+  "Dallas ISD",
+  "DeSoto ISD",
+  "Duncanville ISD",
+  "Gainesville ISD",
+  "Garland ISD",
+  "Grand Prairie ISD",
+];
+
+const MONTH_OPTIONS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+const YEAR_OPTIONS = ["2022", "2023", "2024", "2025", "2026"];
+
+const SOURCE_OPTIONS = [
+  "CC Solutions",
+  "District Salesforce",
+  "Texas Education Agency (TEA)",
+  "National Student Clearinghouse (NSC)",
+  "Promise Salesforce",
+];
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App(){
+  const [showLanding,setShowLanding]=useState(true);
   const [connected,setConnected]=useState(null);
   const [categoryMenu,setCategoryMenu]=useState({});
 
@@ -1146,11 +1178,162 @@ export default function App(){
 
   // Change 12: Compose the footnote from source + date + any extra note
   function composeFootnote(){
-    const src = (manualText.data_source||"").trim();
-    const dt  = (manualText.as_of_date||"").trim();
+    const src = (manualText.data_source||"")
+      .split(",")
+      .map(s=>s.trim())
+      .filter(s=>s && s !== "__other__")
+      .join(", ");
+    const dt  = (manualText.as_of_date||todayISO()).trim();
     const extra = (manualText.footnote||"").trim();
     let base = src && dt ? `Source: ${src} as of ${dt}` : src ? `Source: ${src}` : dt ? `As of ${dt}` : "";
     return base && extra ? `${base} · ${extra}` : base || extra;
+  }
+
+  function updateManualField(key, value){
+    setManualText(p=>({...p,[key]:value}));
+    if(appMode==="presentation"){
+      presMetaCacheRef.current = {...presMetaCacheRef.current,[key]:value};
+      setPresMetaCache({...presMetaCacheRef.current});
+    }
+    resetPreview();
+  }
+
+  function renderMetadataField(f){
+    const value = manualText[f.key] || "";
+    const requiredValue = f.key === "data_source"
+      ? value.split(",").map(s=>s.trim()).filter(s=>s && s !== "__other__").join(", ")
+      : (value || (f.key === "as_of_date" ? todayISO() : ""));
+    const requiredMissing = f.required && !requiredValue.trim();
+
+    const selectStyle = {borderColor: requiredMissing ? "#FCA5A5" : ""};
+
+    if(f.key === "District"){
+      const isOther = value && !DISTRICT_OPTIONS.includes(value);
+      return (
+        <>
+          <select className="text-input" style={selectStyle} value={isOther ? "__other__" : value}
+            onChange={e=>updateManualField("District", e.target.value)}>
+            <option value="">Select district/campus…</option>
+            {DISTRICT_OPTIONS.map(opt=><option key={opt} value={opt}>{opt}</option>)}
+            <option value="__other__">Other…</option>
+          </select>
+          {isOther || value === "" ? null : null}
+          {(isOther || value === "__other__") && (
+            <input type="text" className="text-input" style={{marginTop:8}} placeholder="Type district/campus name…"
+              value={isOther && value !== "__other__" ? value : ""} onChange={e=>updateManualField("District", e.target.value)} />
+          )}
+        </>
+      );
+    }
+
+    if(f.key === "month"){
+      const isOther = value && !MONTH_OPTIONS.includes(value);
+      return (
+        <>
+          <select className="text-input" value={isOther ? "__other__" : value}
+            onChange={e=>updateManualField("month", e.target.value)}>
+            <option value="">Select month…</option>
+            {MONTH_OPTIONS.map(opt=><option key={opt} value={opt}>{opt}</option>)}
+            <option value="__other__">Other…</option>
+          </select>
+          {(isOther || value === "__other__") && (
+            <input type="text" className="text-input" style={{marginTop:8}} placeholder="Type month…"
+              value={isOther && value !== "__other__" ? value : ""} onChange={e=>updateManualField("month", e.target.value)} />
+          )}
+        </>
+      );
+    }
+
+    if(f.key === "year_label"){
+      const isOther = value && !YEAR_OPTIONS.includes(value);
+      return (
+        <>
+          <select className="text-input" value={isOther ? "__other__" : value}
+            onChange={e=>updateManualField("year_label", e.target.value)}>
+            <option value="">Select year…</option>
+            {YEAR_OPTIONS.map(opt=><option key={opt} value={opt}>{opt}</option>)}
+            <option value="__other__">Other…</option>
+          </select>
+          {(isOther || value === "__other__") && (
+            <input type="text" className="text-input" style={{marginTop:8}} placeholder="Type year…"
+              value={isOther && value !== "__other__" ? value : ""} onChange={e=>updateManualField("year_label", e.target.value)} />
+          )}
+        </>
+      );
+    }
+
+    if(f.key === "data_source"){
+      const selected = value ? value.split(",").map(s=>s.trim()).filter(Boolean) : [];
+      const selectedKnown = selected.filter(s=>SOURCE_OPTIONS.includes(s));
+      const otherValue = selected.find(s=>!SOURCE_OPTIONS.includes(s) && s !== "__other__") || "";
+      const otherSelected = selected.includes("__other__") || !!otherValue;
+
+      const commitSources = (known, otherOpen, otherText) => {
+        const next = [...known];
+        if(otherText && otherText.trim()) next.push(otherText.trim());
+        else if(otherOpen) next.push("__other__");
+        updateManualField("data_source", next.join(", "));
+      };
+
+      const toggleSource = (opt, checked) => {
+        const nextKnown = checked
+          ? Array.from(new Set([...selectedKnown, opt]))
+          : selectedKnown.filter(s=>s!==opt);
+        commitSources(nextKnown, otherSelected, otherValue);
+      };
+
+      const toggleOther = (checked) => {
+        commitSources(selectedKnown, checked, checked ? otherValue : "");
+      };
+
+      const setOtherSource = (other) => {
+        commitSources(selectedKnown, true, other);
+      };
+
+      return (
+        <div style={{
+          border:`1px solid ${requiredMissing ? "#FCA5A5" : "#D1D5DB"}`,
+          borderRadius:6,
+          padding:"8px 10px",
+          background:"#fff",
+          maxHeight:128,
+          overflowY:"auto"
+        }}>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {SOURCE_OPTIONS.map(opt=>(
+              <label key={opt} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#374151"}}>
+                <input type="checkbox" checked={selectedKnown.includes(opt)} onChange={e=>toggleSource(opt,e.target.checked)} />
+                <span>{opt}</span>
+              </label>
+            ))}
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#374151"}}>
+              <input type="checkbox" checked={otherSelected} onChange={e=>toggleOther(e.target.checked)} />
+              <span>Other…</span>
+            </label>
+          </div>
+          {otherSelected && (
+            <input type="text" className="text-input" style={{marginTop:8}} placeholder="Type other source…"
+              value={otherValue} onChange={e=>setOtherSource(e.target.value)} />
+          )}
+        </div>
+      );
+    }
+
+    if(f.key === "as_of_date"){
+      return (
+        <input type="date" className="text-input" style={selectStyle}
+          value={value || todayISO()}
+          onChange={e=>updateManualField("as_of_date", e.target.value)} />
+      );
+    }
+
+    return (
+      <input type="text" className="text-input"
+        style={selectStyle}
+        placeholder={f.placeholder}
+        value={value}
+        onChange={e=>updateManualField(f.key, e.target.value)} />
+    );
   }
 
     const FULLY_STATIC_TYPES = ["mission","methodology","section_divider","agenda","outro"];
@@ -1161,6 +1344,213 @@ export default function App(){
   const canGenerate=canPreview&&!!preview&&!generating;
   const allSlides=Object.values(categoryMenu).flat();
   const curPresSlide=presSlides[presCurrentIdx];
+
+  if(showLanding){
+    return (
+      <div
+        className="emc-landing-page"
+        onClick={()=>setShowLanding(false)}
+        onKeyDown={e=>{ if(e.key === "Enter" || e.key === " ") setShowLanding(false); }}
+        role="button"
+        tabIndex={0}
+        aria-label="Enter EMC Slide Generator"
+        style={{
+          minHeight:"100vh",
+          width:"100%",
+          background:"radial-gradient(circle at 50% 15%, #111827 0%, #05070B 42%, #02030A 100%)",
+          color:"#fff",
+          display:"flex",
+          alignItems:"center",
+          justifyContent:"center",
+          overflow:"hidden",
+          position:"relative",
+          cursor:"pointer",
+          fontFamily:"Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        }}
+      >
+        <style>{`
+          @keyframes emcWordReveal {
+            0% { opacity: 0; transform: translateY(-34px); filter: blur(8px); letter-spacing: .22em; }
+            55% { opacity: 1; transform: translateY(5px); filter: blur(0); }
+            100% { opacity: 1; transform: translateY(0); filter: blur(0); letter-spacing: .08em; }
+          }
+          @keyframes emcGlowPulse {
+            0%, 100% { text-shadow: 0 0 18px rgba(255,255,255,.15), 0 0 34px rgba(0,176,240,.18); }
+            50% { text-shadow: 0 0 24px rgba(255,255,255,.35), 0 0 52px rgba(0,176,240,.45); }
+          }
+          @keyframes emcLineSweep {
+            from { transform: scaleX(0); opacity: .1; }
+            to { transform: scaleX(1); opacity: 1; }
+          }
+          @keyframes emcFloat {
+            0%,100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+          }
+          @keyframes emcProgress {
+            0% { transform: translateX(-110%); }
+            100% { transform: translateX(260%); }
+          }
+          .emc-landing-word {
+            opacity: 0;
+            animation: emcWordReveal .9s cubic-bezier(.2,.85,.2,1) forwards, emcGlowPulse 2.6s ease-in-out infinite;
+            font-size: clamp(3rem, 8vw, 7.5rem);
+            line-height: .95;
+            font-weight: 950;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            text-align: center;
+          }
+          .emc-landing-word:nth-child(1) { animation-delay: .35s, 1.2s; color: #FFFFFF; }
+          .emc-landing-word:nth-child(2) { animation-delay: .95s, 1.7s; color: #00B0F0; }
+          .emc-landing-word:nth-child(3) { animation-delay: 1.55s, 2.1s; color: #E8192C; }
+          .emc-landing-divider {
+            width: min(520px, 78vw);
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.42), transparent);
+            transform-origin: center;
+            animation: emcLineSweep .8s ease-out forwards;
+            opacity: 0;
+          }
+          .emc-landing-enter {
+            transition: transform .2s ease, background .2s ease, box-shadow .2s ease;
+          }
+          .emc-landing-page:hover .emc-landing-enter {
+            transform: translateY(-2px);
+            box-shadow: 0 14px 40px rgba(0,176,240,.25);
+          }
+        `}</style>
+
+        <div style={{
+          position:"absolute",
+          inset:"-20%",
+          background:"radial-gradient(circle at 20% 10%, rgba(0,176,240,.16), transparent 28%), radial-gradient(circle at 82% 74%, rgba(232,25,44,.15), transparent 30%)",
+          pointerEvents:"none"
+        }}/>
+
+        <div style={{
+          position:"absolute",
+          width:"620px",
+          height:"620px",
+          border:"42px solid rgba(0,176,240,.08)",
+          borderRadius:"50%",
+          right:"-190px",
+          top:"-180px",
+          pointerEvents:"none"
+        }}/>
+        <div style={{
+          position:"absolute",
+          width:"560px",
+          height:"560px",
+          border:"36px solid rgba(232,25,44,.07)",
+          borderRadius:"50%",
+          left:"-220px",
+          bottom:"-220px",
+          pointerEvents:"none"
+        }}/>
+
+        <main style={{
+          position:"relative",
+          zIndex:1,
+          width:"min(980px, 92vw)",
+          display:"flex",
+          flexDirection:"column",
+          alignItems:"center",
+          gap:32,
+          padding:"48px 20px"
+        }}>
+          <div style={{
+            display:"flex",
+            flexDirection:"column",
+            alignItems:"center",
+            gap:18,
+            animation:"emcFloat 4.4s ease-in-out infinite"
+          }}>
+            <img
+              src={emcLandingLogo}
+              alt="Economic Mobility Center"
+              style={{
+                width:"clamp(120px, 14vw, 180px)",
+                height:"auto",
+                objectFit:"contain",
+                filter:"drop-shadow(0 12px 34px rgba(0,176,240,.26))"
+              }}
+            />
+            <div style={{
+              fontSize:"clamp(1.5rem, 4vw, 3rem)",
+              fontWeight:900,
+              lineHeight:1,
+              letterSpacing:".03em",
+              color:"#00B0F0",
+              textAlign:"center"
+            }}>
+              Slide Generator
+            </div>
+          </div>
+
+          <div className="emc-landing-divider" style={{animationDelay:".18s"}}/>
+
+          <section aria-label="Let's start building" style={{
+            display:"flex",
+            flexDirection:"column",
+            alignItems:"center",
+            gap:22
+          }}>
+            <div className="emc-landing-word">LET'S</div>
+            <div className="emc-landing-word">START</div>
+            <div className="emc-landing-word">BUILDING</div>
+          </section>
+
+          <div className="emc-landing-divider" style={{animationDelay:"1.9s"}}/>
+
+          <button
+            className="emc-landing-enter"
+            onClick={e=>{e.stopPropagation();setShowLanding(false);}}
+            style={{
+              marginTop:4,
+              border:"1px solid rgba(0,176,240,.55)",
+              background:"linear-gradient(135deg, #003DA5, #00B0F0)",
+              color:"#fff",
+              borderRadius:999,
+              padding:"14px 30px",
+              fontSize:15,
+              fontWeight:850,
+              letterSpacing:".06em",
+              textTransform:"uppercase",
+              cursor:"pointer"
+            }}
+          >
+            Enter App →
+          </button>
+
+          <div style={{
+            width:"min(360px, 62vw)",
+            height:6,
+            borderRadius:999,
+            background:"rgba(255,255,255,.14)",
+            overflow:"hidden",
+            marginTop:4
+          }}>
+            <div style={{
+              width:"40%",
+              height:"100%",
+              borderRadius:999,
+              background:"linear-gradient(90deg, #00B0F0, #E8192C)",
+              animation:"emcProgress 2.2s ease-in-out infinite"
+            }}/>
+          </div>
+
+          <div style={{
+            fontSize:13,
+            color:"rgba(255,255,255,.68)",
+            letterSpacing:".08em",
+            textTransform:"uppercase"
+          }}>
+            Click anywhere to begin
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return(
     <div className="app-shell" style={{minWidth:320,overflowX:"hidden"}}>
@@ -1703,20 +2093,7 @@ export default function App(){
                     {f.label}
                     {f.required&&<span style={{color:"#E8192C",fontSize:9,marginLeft:4}}>REQUIRED</span>}
                   </label>
-                  <input type="text" className="text-input"
-                    style={{borderColor:f.required&&!(manualText[f.key]||"").trim()?"#FCA5A5":""}}
-                    placeholder={f.placeholder}
-                    value={manualText[f.key]||""}
-                    onChange={e=>{
-                      const val=e.target.value;
-                      setManualText(p=>({...p,[f.key]:val}));
-                      // Cache for subsequent slides (both state and ref)
-                      if(isPresMode){
-                        presMetaCacheRef.current = {...presMetaCacheRef.current,[f.key]:val};
-                        setPresMetaCache({...presMetaCacheRef.current});
-                      }
-                      resetPreview();
-                    }}/>
+                  {renderMetadataField(f)}
                 </div>
               ))}
             </div>
@@ -1731,7 +2108,7 @@ export default function App(){
              !["cover","mission","methodology","section_divider","agenda"].includes(selectedType)&&(
               <div style={{fontSize:11,color:"#374151",background:"#F1F5F9",border:"1px solid #CBD5E1",borderRadius:4,padding:"6px 12px",marginBottom:8}}>
                 📄 Footnote will read: <em style={{color:"#0D1B4B"}}>
-                  "Source: {manualText.data_source||"—"} as of {manualText.as_of_date||"—"}"
+                  "Source: {(manualText.data_source||"").split(",").map(s=>s.trim()).filter(s=>s && s !== "__other__").join(", ")||"—"} as of {manualText.as_of_date||todayISO()}"
                   {manualText.footnote?` · ${manualText.footnote}`:""}
                 </em>
               </div>
@@ -1739,15 +2116,34 @@ export default function App(){
 
             {!preview?(
               <>
-                <button className={`preview-btn ${previewing?"loading":""}`} onClick={handlePreview} disabled={previewing}>
-                  {previewing?<><span className="spinner"/>Calculating…</>:"👁 Calculate Preview"}
+                <button
+                  className={`preview-btn ${previewing?"loading":""}`}
+                  onClick={handlePreview}
+                  disabled={previewing}
+                  style={{position:"relative"}}
+                >
+                  {previewing
+                    ? <><span className="spinner"/>Generating Preview…</>
+                    : <>👁 Calculate Preview</>
+                  }
                 </button>
                 {previewing&&(
-                  <div className="loading-banner">
-                    <span className="spinner" style={{width:18,height:18}}/>
-                    <div>
-                      <div style={{fontWeight:700,fontSize:13}}>Calculating preview…</div>
-                      <div style={{fontSize:11,opacity:.8}}>Analyzing your data and generating insights</div>
+                  <div className="loading-banner" style={{
+                    marginTop:12,
+                    display:"flex",
+                    alignItems:"center",
+                    gap:12,
+                    justifyContent:"center",
+                    background:"#EFF6FF",
+                    border:"1px solid #BFDBFE",
+                    borderRadius:8,
+                    padding:"14px 18px",
+                    color:"#1E40AF"
+                  }}>
+                    <span className="spinner dark" style={{width:18,height:18,flexShrink:0}}/>
+                    <div style={{textAlign:"left"}}>
+                      <div style={{fontWeight:800,fontSize:13}}>Generating preview…</div>
+                      <div style={{fontSize:11,opacity:.85}}>Analyzing the selected data, calculating chart values, and generating insights. This may take a few seconds.</div>
                     </div>
                   </div>
                 )}
