@@ -525,6 +525,142 @@ async def generate_insights_endpoint(
         raise HTTPException(500, str(e))
 
 
+
+@app.post("/ask-claude-data")
+async def ask_claude_data(
+    slide_type: str = Form(...),
+    upload_path: str = Form(...),
+    selected_districts: str = Form("[]"),
+    selected_campuses: str = Form("{}"),
+    overrides: str = Form("{}"),
+    manual_text: str = Form("{}"),
+    mode: str = Form("count"),
+    aggregation_level: str = Form("district"),
+    question: str = Form(...),
+):
+    """
+    Ask Claude a question about the currently loaded/selected dataset.
+
+    This sends Claude a compact dataset context, not the full workbook.
+    """
+    if not _ANTHROPIC_OK:
+        raise HTTPException(503, "Claude is not available because the anthropic package is not installed.")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(503, "Claude is not configured because ANTHROPIC_API_KEY is not set.")
+
+    if not upload_path or not os.path.isfile(upload_path):
+        raise HTTPException(400, "No uploaded dataset found. Upload a data file before asking Claude.")
+
+    q = (question or "").strip()
+    if not q:
+        raise HTTPException(400, "Question cannot be blank.")
+    if len(q) > 1500:
+        raise HTTPException(400, "Question is too long. Please keep it under 1,500 characters.")
+
+    try:
+        dists = json.loads(selected_districts)
+        camp_map = json.loads(selected_campuses)
+        override_map = json.loads(overrides)
+        manual_map = json.loads(manual_text)
+    except Exception:
+        raise HTTPException(400, "Invalid request metadata.")
+
+    try:
+        df = _load_selection(upload_path, dists, camp_map)
+    except Exception as e:
+        raise HTTPException(400, f"Could not load selected data: {e}")
+
+    if df is None or df.empty:
+        raise HTTPException(400, "The selected dataset is empty.")
+
+    max_rows = min(len(df), 35)
+    sample = df.head(max_rows).fillna("").astype(str)
+    columns = [str(c) for c in df.columns]
+
+    numeric_summary = {}
+    try:
+        numeric_df = df.select_dtypes(include="number")
+        if not numeric_df.empty:
+            numeric_summary = {
+                str(col): {
+                    "count": int(numeric_df[col].count()),
+                    "mean": round(float(numeric_df[col].mean()), 3) if pd.notna(numeric_df[col].mean()) else None,
+                    "min": round(float(numeric_df[col].min()), 3) if pd.notna(numeric_df[col].min()) else None,
+                    "max": round(float(numeric_df[col].max()), 3) if pd.notna(numeric_df[col].max()) else None,
+                }
+                for col in list(numeric_df.columns)[:25]
+            }
+    except Exception:
+        numeric_summary = {}
+
+    value_counts = {}
+    try:
+        for col in columns[:35]:
+            series = df[col].dropna().astype(str).str.strip()
+            if 0 < series.nunique() <= 20:
+                value_counts[col] = series.value_counts().head(12).to_dict()
+    except Exception:
+        value_counts = {}
+
+    calculated_payload = {}
+    try:
+        calc = SLIDE_REGISTRY.get(slide_type, {}).get("calculator")
+        if calc:
+            calculated_payload = calc(df, overrides=override_map, mode=mode, aggregation_level=aggregation_level)
+    except Exception as e:
+        calculated_payload = {"calculation_error": str(e)}
+
+    data_context = {
+        "slide_type": slide_type,
+        "mode": mode,
+        "aggregation_level": aggregation_level,
+        "manual_text": manual_map,
+        "selected_districts": dists,
+        "selected_campuses": camp_map,
+        "row_count": int(len(df)),
+        "column_count": int(len(df.columns)),
+        "columns": columns,
+        "numeric_summary": numeric_summary,
+        "value_counts_for_small_categorical_columns": value_counts,
+        "calculated_slide_payload": calculated_payload,
+        "sample_rows": sample.to_dict(orient="records"),
+    }
+
+    prompt = (
+        "You are Claude, acting as an education data analyst inside the EMC slide generator. "
+        "Answer the user's question using ONLY the dataset context provided below. "
+        "When calculating percentages, clearly state numerator, denominator, and formula. "
+        "If the requested calculation cannot be made from the available columns, say exactly what column or definition is missing. "
+        "Keep the answer concise and practical. Do not invent data.\\n\\n"
+        f"USER QUESTION:\\n{q}\\n\\n"
+        f"DATASET CONTEXT JSON:\\n{json.dumps(data_context, ensure_ascii=False)[:90000]}"
+    )
+
+    client = _anthropic.Anthropic(api_key=api_key)
+    last_error = None
+    for model in _PREFERRED_MODELS:
+        try:
+            msg = client.messages.create(
+                model=model,
+                max_tokens=700,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            answer = msg.content[0].text.strip()
+            return {
+                "answer": answer,
+                "model": model,
+                "row_count": int(len(df)),
+                "sample_rows_used": max_rows,
+            }
+        except Exception as e:
+            last_error = e
+            print(f"Ask Claude: model {model} failed: {e}")
+            continue
+
+    raise HTTPException(502, f"Claude request failed: {last_error}")
+
 @app.post("/preview-slide-html")
 async def preview_slide_html(
     slide_type: str = Form(...), upload_path: str = Form(""),

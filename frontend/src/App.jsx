@@ -791,6 +791,12 @@ export default function App(){
   const [editCategories,setEditCategories]=useState([]);
   const [editInsights,setEditInsights]=useState([]);
 
+  // Ask Claude about the currently loaded dataset
+  const [claudeQuestion,setClaudeQuestion]=useState("");
+  const [claudeAnswer,setClaudeAnswer]=useState("");
+  const [claudeAsking,setClaudeAsking]=useState(false);
+  const [claudeError,setClaudeError]=useState("");
+
   // Generate
   const [generating,setGenerating]=useState(false);
   const [status,setStatus]=useState({type:"",msg:""});
@@ -876,7 +882,11 @@ export default function App(){
     setStatus({type:"",msg:""});
     if(fileRef.current)fileRef.current.value="";
   }
-  function resetPreview(){setPreview(null);setEditLabels({});setEditSeries([]);setEditCategories([]);setEditInsights([]);setStatus({type:"",msg:""});}
+  function resetPreview(){
+    setPreview(null);setEditLabels({});setEditSeries([]);setEditCategories([]);setEditInsights([]);
+    setClaudeQuestion("");setClaudeAnswer("");setClaudeError("");setClaudeAsking(false);
+    setStatus({type:"",msg:""});
+  }
 
   // ── Pre-upload confirmation ─────────────────────────────────────────────
   function handleConfirmUpload(e){
@@ -994,6 +1004,40 @@ export default function App(){
       const msg=err.response?.data?.detail?.error||err.response?.data?.detail||"Preview failed.";
       setStatus({type:"error",msg:`✗ ${msg}`});
     }finally{setPreviewing(false);}
+  }
+
+  async function askClaudeAboutData(){
+    const q = claudeQuestion.trim();
+    if(!q){
+      setClaudeError("Type a question first.");
+      return;
+    }
+    if(!inspection?.upload_path){
+      setClaudeError("Upload and select a dataset before asking Claude.");
+      return;
+    }
+    setClaudeAsking(true);
+    setClaudeError("");
+    setClaudeAnswer("");
+    try{
+      const fd = new FormData();
+      fd.append("slide_type", selectedType);
+      fd.append("upload_path", inspection.upload_path);
+      fd.append("selected_districts", JSON.stringify(selectedDistricts));
+      fd.append("selected_campuses", JSON.stringify(selectedCampuses));
+      fd.append("overrides", JSON.stringify(buildOverrides()));
+      fd.append("manual_text", JSON.stringify({...manualText, footnote: composeFootnote()}));
+      fd.append("mode", mode);
+      fd.append("aggregation_level", aggLevel);
+      fd.append("question", q);
+      const r = await axios.post(`${API}/ask-claude-data`, fd, {timeout:90000});
+      setClaudeAnswer(r.data?.answer || "Claude returned an empty answer.");
+    }catch(err){
+      const detail = err.response?.data?.detail || "Claude request failed.";
+      setClaudeError(typeof detail === "string" ? detail : JSON.stringify(detail));
+    }finally{
+      setClaudeAsking(false);
+    }
   }
 
   // ── Generate single slide ─────────────────────────────────────────────────
@@ -2295,6 +2339,13 @@ export default function App(){
                       if(r.data?.insights) setEditInsights(r.data.insights);
                     }catch(e){console.error("Regenerate insights error:",e);}
                   }}>🤖 Regenerate Insights</button>
+                  <button
+                    className="recalc-btn"
+                    style={{color:"#0D1B4B",borderColor:"#00B0F0",background:"#EFF6FF"}}
+                    onClick={()=>setClaudeQuestion(q=>q || "Calculate the TSI Met percent for this loaded dataset.")}
+                  >
+                    💬 Ask Claude
+                  </button>
                   {isPresMode&&(
                     <>
                       <button className="preview-btn" style={{background:"#16A34A",border:"none"}} onClick={onApprove}>✓ Approve — next slide →</button>
@@ -2302,6 +2353,73 @@ export default function App(){
                     </>
                   )}
                 </div>
+
+                {(claudeQuestion || claudeAnswer || claudeError || claudeAsking) && (
+                  <div style={{
+                    marginTop:14,
+                    border:"1px solid #BFDBFE",
+                    background:"#F8FBFF",
+                    borderRadius:8,
+                    padding:"12px 14px"
+                  }}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8}}>
+                      <div style={{fontWeight:800,color:"#0D1B4B",fontSize:13}}>💬 Ask Claude about this loaded dataset</div>
+                      <button
+                        type="button"
+                        onClick={()=>{setClaudeQuestion("");setClaudeAnswer("");setClaudeError("");}}
+                        style={{background:"none",border:"none",color:"#6B7280",cursor:"pointer",fontSize:16}}
+                        title="Close Ask Claude"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <textarea
+                      className="text-input"
+                      rows={3}
+                      placeholder="Ask a data question, e.g. Calculate the TSI Met percent for this loaded dataset."
+                      value={claudeQuestion}
+                      onChange={e=>setClaudeQuestion(e.target.value)}
+                      style={{width:"100%",resize:"vertical",fontSize:12,lineHeight:1.45}}
+                    />
+                    <div style={{display:"flex",gap:8,alignItems:"center",marginTop:8,flexWrap:"wrap"}}>
+                      <button
+                        className={`preview-btn ${claudeAsking?"loading":""}`}
+                        onClick={askClaudeAboutData}
+                        disabled={claudeAsking || !claudeQuestion.trim()}
+                        style={{width:"auto",padding:"8px 16px",fontSize:12}}
+                      >
+                        {claudeAsking ? <><span className="spinner"/>Asking Claude…</> : "Ask Claude"}
+                      </button>
+                      <button
+                        className="link-btn"
+                        type="button"
+                        onClick={()=>setClaudeQuestion("Calculate the TSI Met percent for this loaded dataset.")}
+                        style={{fontSize:11}}
+                      >
+                        Use example question
+                      </button>
+                    </div>
+                    {claudeAsking && (
+                      <div className="loading-banner" style={{marginTop:10}}>
+                        <span className="spinner" style={{width:16,height:16}}/>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:12}}>Claude is reviewing the selected dataset…</div>
+                          <div style={{fontSize:11,opacity:.8}}>This can take a few seconds for larger files.</div>
+                        </div>
+                      </div>
+                    )}
+                    {claudeError && (
+                      <div style={{marginTop:10,color:"#B91C1C",background:"#FEF2F2",border:"1px solid #FCA5A5",borderRadius:6,padding:"8px 10px",fontSize:12}}>
+                        {claudeError}
+                      </div>
+                    )}
+                    {claudeAnswer && (
+                      <div style={{marginTop:10,color:"#0D1B4B",background:"#FFFFFF",border:"1px solid #DBEAFE",borderRadius:6,padding:"10px 12px",fontSize:12,lineHeight:1.5,whiteSpace:"pre-wrap"}}>
+                        {claudeAnswer}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
