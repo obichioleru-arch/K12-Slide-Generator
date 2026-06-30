@@ -7,37 +7,505 @@ import emcLandingLogo from "./assets/emc_landing_logo.png";
 const API = (import.meta.env.VITE_API_URL ||
   (import.meta.env.DEV ? "http://127.0.0.1:8000" : "https://k12-slide-generator-api.onrender.com")
 ).replace(/\/$/, "");
-const COLORS = ["#0D1B4B","#00B0F0","#E8192C","#FFC000","#C084FC","#6B7280"];
+const COLORS = ["#003291","#00B0F0","#E8192C","#FFC000","#C084FC","#6B7280"];
 const MANUAL = "__manual__";
 
 // ── Mini chart preview ────────────────────────────────────────────────────────
-function ChartPreview({ chartData, mode }) {
+
+
+function getSeriesColor(name, idx = 0){
+  const n = String(name || "").toLowerCase();
+  if(n.includes("not met")) return "#D97706";
+  if(n.includes("tsi met") || n.trim() === "met" || n.includes(" met")) return "#003291";
+  const palette = ["#003291", "#6B7280", "#D97706", "#F9A825", "#7C3AED"];
+  return palette[idx % palette.length];
+}
+
+
+function campusLabel(name){
+  let s = String(name || "").trim();
+  const replacements = [
+    ["High School", "HS"],
+    ["Accelerated", "Accel."],
+    ["Academy", "Acad."],
+    ["Collegiate Institute", "Collegiate Inst."],
+    ["Career High", "Career"],
+    ["Young Women's Leadership Academy", "YWLA"],
+    ["at Bill Arnold", "Bill Arnold"],
+  ];
+  replacements.forEach(([oldValue,newValue]) => { s = s.replaceAll(oldValue,newValue); });
+  return s;
+}
+
+function cleanSourceText(text){
+  let s = String(text || "").trim();
+  s = s.replace(/^(Source:\s*[^.]+\.?\s*)+(?=Source:\s*)/i, "");
+  s = s.replace(/^Source:\s*District Salesforce\.\s*(?=Source:\s*)/i, "");
+  return s.trim();
+}
+
+function shouldUseHorizontalStackedPreview(chartData){
+  const names = (chartData?.series || []).map(s => String(s?.name || "").toLowerCase());
+  return names.length === 2 && names.some(n => n.includes("not met")) && names.some(n => n.includes("met"));
+}
+
+function isCcmrYoyCards(chartData){
+  const cats = (chartData?.categories || []).map(c => String(c).toLowerCase());
+  const hasMetrics = ["tsi","ibc","enrollment"].every(m => cats.some(c => c.includes(m)));
+  return hasMetrics && (chartData?.series || []).length >= 2;
+}
+
+function isCcmrAfAccountabilityPreview(chartData){
+  const cats = (chartData?.categories || []).map(c => String(c).toLowerCase());
+  return cats.includes("met") && cats.some(c => c.includes("approach")) && cats.some(c => c.includes("not met"));
+}
+
+function CcmrAfAccountabilityPreview({ chartData }){
+  const categories = chartData?.categories || ["Met","Approaches","Not Met"];
+  const vals = chartData?.series?.[0]?.values || [0,0,0];
+  const total = Number(chartData?.total_students) || vals.reduce((a,b)=>a+(Number(b)||0),0) || 1;
+  const pctFromData = chartData?.status_percentages || vals.map(v => total ? (Number(v)||0)/total*100 : 0);
+  const idxFor = label => categories.findIndex(c => String(c).toLowerCase().includes(label));
+  const metIdx = idxFor("met") >= 0 ? idxFor("met") : 0;
+  const appIdx = idxFor("approach") >= 0 ? idxFor("approach") : 1;
+  const notIdx = categories.findIndex(c => String(c).toLowerCase().includes("not met"));
+  const finalNotIdx = notIdx >= 0 ? notIdx : 2;
+  const data = [
+    {label:"Met", count:Number(vals[metIdx])||0, pct:Number(pctFromData[metIdx])||0, color:"#16A34A", bg:"#ECFDF5"},
+    {label:"Approaches", count:Number(vals[appIdx])||0, pct:Number(pctFromData[appIdx])||0, color:"#D97706", bg:"#FFFBEB"},
+    {label:"Not Met", count:Number(vals[finalNotIdx])||0, pct:Number(pctFromData[finalNotIdx])||0, color:"#E11D48", bg:"#FFF1F2"},
+  ];
+  const goal = Number(chartData?.goal_pct) || 90;
+  const metPct = data[0].pct;
+  const gap = Number(chartData?.gap_pts ?? Math.max(0, goal-metPct)).toFixed(1);
+  const needed = Number(chartData?.additional_needed || 0);
+
+  return(
+    <div style={{width:"100%",maxWidth:780,margin:"0 auto",fontFamily:"Arial, sans-serif",color:"#1F2933"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:14}}>
+        {data.map(d=>(
+          <div key={d.label} style={{border:`2px solid ${d.color}`,background:d.bg,borderRadius:8,padding:"12px 10px",textAlign:"center"}}>
+            <div style={{fontSize:12,fontWeight:900,letterSpacing:".08em",textTransform:"uppercase",color:d.color}}>{d.label}</div>
+            <div style={{fontSize:28,fontWeight:900,color:d.color,lineHeight:1.1,marginTop:6}}>{Math.round(d.count).toLocaleString()}</div>
+            <div style={{fontSize:13,fontWeight:800,color:d.color}}>{d.pct.toFixed(1)}%</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{fontWeight:900,color:"#003291",margin:"6px 0 6px",fontSize:14}}>Progress Toward 90% Goal</div>
+      <div style={{height:26,display:"flex",borderRadius:4,overflow:"hidden",background:"#E5E7EB",position:"relative",marginBottom:10}}>
+        {data.map(d=><div key={d.label} style={{width:`${Math.max(0,d.pct)}%`,background:d.color,color:"#fff",fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{d.label} {d.pct.toFixed(1)}%</div>)}
+        <div style={{position:"absolute",left:`${goal}%`,top:0,bottom:0,width:2,background:"#003291"}}/>
+      </div>
+      <div style={{textAlign:"right",fontSize:10,fontWeight:900,color:"#003291",marginTop:-8}}>GOAL</div>
+
+      <div style={{background:"#F3F4F6",borderRadius:8,padding:12,display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+        <div><div style={{fontSize:10,fontWeight:800,color:"#374151"}}>Currently Met</div><div style={{fontSize:20,fontWeight:900,color:"#16A34A"}}>{Math.round(data[0].count).toLocaleString()}</div></div>
+        <div><div style={{fontSize:10,fontWeight:800,color:"#374151"}}>Additional Needed</div><div style={{fontSize:20,fontWeight:900,color:"#E11D48"}}>+{needed.toLocaleString()}</div></div>
+        <div><div style={{fontSize:10,fontWeight:800,color:"#374151"}}>Gap to Goal</div><div style={{fontSize:20,fontWeight:900,color:"#003291"}}>{gap} pts</div></div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+const CCMR_AF_STATUS_SLIDE_IDS = new Set([
+  "ccmr_af_status",
+  "ccmr_accountability",
+  "ccmr_accountability_status",
+  "ccmr_a_f_status",
+  "ccmr_af_accountability",
+  "ccmr_status"
+]);
+
+function isCcmrAfStatusSlide(slideType){
+  return CCMR_AF_STATUS_SLIDE_IDS.has(String(slideType || ""));
+}
+
+const CCMR_AF_ONLY_REQUIRED_COLUMNS = [
+  {
+    key: "ccmr_overall",
+    label: "CCMR Overall",
+    column: "CCMR Overall",
+    description: "Overall CCMR accountability status. This represents CCMR A-F Status. Values: Met, Approaches, Not Met.",
+    required: true,
+    candidates: ["CCMR Overall", "CCMR Overall Status", "CCMR A-F Overall", "CCMR A-F Status", "CCMR Status", "CCMR"]
+  }
+];
+
+function getDisplayedRequiredColumns(slideType, rows){
+  if(isCcmrAfStatusSlide(slideType)){
+    return CCMR_AF_ONLY_REQUIRED_COLUMNS;
+  }
+  return rows;
+}
+
+
+const CCMR_PATHWAY_REQUIRED_COLUMNS = [
+  {
+    key: "ccmr_status",
+    label: "CCMR A-F / CCMR Status",
+    column: "CCMR Overall Status",
+    description: "Overall CCMR A-F status. Values: Met, Approaches, Not Met.",
+    required: true,
+    candidates: ["CCMR Overall Status", "CCMR Overall", "CCMR A-F Status", "CCMR A-F Overall", "CCMR Status", "CCMR"]
+  },
+  {
+    key: "dual_credit",
+    label: "Dual Credit",
+    column: "Dual Credit",
+    description: "Dual Credit CCMR qualifier. Values: Met, Not Met.",
+    required: true,
+    candidates: ["CCMR Dual Credit Status", "Dual Credit Status", "Dual Credit", "CCMR Dual Credit", "Dual Credit Met"]
+  },
+  {
+    key: "tsi",
+    label: "CCMR TSI / TSI",
+    column: "CCMR TSI Status",
+    description: "CCMR TSI qualifier. Values: Met, Approaches, Not Met.",
+    required: true,
+    candidates: ["CCMR TSI Status", "CCMR TSI", "TSI Status", "TSI", "College Ready", "TSI Met"]
+  },
+  {
+    key: "ap_ib",
+    label: "AP/IB",
+    column: "AP/IB",
+    description: "AP/IB CCMR qualifier. Values: Met, Not Met.",
+    required: true,
+    candidates: ["CCMR AP/IB Status", "AP/IB Status", "AP IB Status", "AP/IB", "AP Status", "IB Status"]
+  },
+  {
+    key: "ibc",
+    label: "IBC",
+    column: "IBC",
+    description: "Industry-Based Certification CCMR qualifier. Values: Met, Not Met.",
+    required: true,
+    candidates: ["CCMR Certification Status", "CCMR IBC Status", "IBC Status", "IBC", "Industry Based Certification", "Industry-Based Certification", "Certification/IBC", "Certification"]
+  }
+];
+
+function normalizeCcmrPathwayFields(slideType, fields){
+  if(String(slideType || "") === "ccmr_pathway"){
+    return CCMR_PATHWAY_REQUIRED_COLUMNS;
+  }
+  return fields;
+}
+
+function normalizeRequiredColumnsForSlide(slideType, columns){
+  if(isCcmrAfStatusSlide(slideType)){
+    return CCMR_AF_ONLY_REQUIRED_COLUMNS;
+  }
+  return columns;
+}
+
+
+
+function CcmrPathwayPreview({chartData = {}, slideData = {}}) {
+  const total = Number(chartData?.total_students || slideData?.total_students || 0);
+  const onPathway = Number(chartData?.on_pathway || slideData?.on_pathway || 0);
+  const onPct = Number(chartData?.on_pathway_pct || slideData?.on_pathway_pct || 0);
+  const offPathway = Number(chartData?.not_on_pathway || slideData?.not_on_pathway || 0);
+  const offPct = Number(chartData?.not_on_pathway_pct || slideData?.not_on_pathway_pct || 0);
+  const counts = chartData?.counts || [];
+  const pcts = chartData?.percentages || [];
+  const cards = [
+    ["DUAL CREDIT", counts[0] || 0, pcts[0] || 0, "#00B0F0"],
+    ["TSI", counts[1] || 0, pcts[1] || 0, "#7C3AED"],
+    ["AP/IB", counts[2] || 0, pcts[2] || 0, "#10B981"],
+    ["IBC", counts[3] || 0, pcts[3] || 0, "#F59E0B"],
+  ];
+  const top = cards.reduce((best, item) => Number(item[2]) > Number(best[2]) ? item : best, cards[0]);
+
+  return (
+    <div style={{width:"100%", maxWidth:1120, margin:"0 auto", fontFamily:"Arial, sans-serif", color:"#1F2937"}}>
+      <div style={{display:"flex", gap:14, alignItems:"stretch"}}>
+        <div style={{width:210, minHeight:300, background:"#E8192C", color:"white", borderRadius:10, textAlign:"center", padding:"22px 18px", boxSizing:"border-box", position:"relative"}}>
+          <div style={{width:42,height:42,borderRadius:"50%",background:"rgba(255,255,255,.25)",margin:"0 auto 24px",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:22}}>!</div>
+          <div style={{fontSize:42, fontWeight:900, lineHeight:.95}}>{offPathway.toLocaleString()}</div>
+          <div style={{fontSize:15, fontWeight:900, marginTop:10}}>Students</div>
+          <div style={{fontSize:15, fontWeight:900, lineHeight:1.35, marginTop:8}}>NOT ON ANY<br/>CCMR PATHWAY</div>
+          <div style={{position:"absolute", left:20, right:20, bottom:45, background:"rgba(255,255,255,.22)", borderRadius:18, padding:"7px 4px", fontSize:11, fontWeight:900, whiteSpace:"nowrap"}}>{offPct.toFixed(1)}% of all students</div>
+        </div>
+
+        <div style={{flex:1}}>
+          <div style={{background:"#003291", color:"white", borderRadius:7, padding:"15px 18px", marginBottom:12}}>
+            <div style={{color:"#BFD7FF", fontWeight:900, fontSize:15}}>STUDENTS ON A CCMR PATHWAY</div>
+            <div style={{fontWeight:900, fontSize:15, marginTop:8}}>
+              {onPathway.toLocaleString()} students are on pathway toward CCMR
+              <span style={{color:"#00B0F0", marginLeft:14}}>{onPct.toFixed(1)}% of enrollment</span>
+            </div>
+          </div>
+
+          <div style={{display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8}}>
+            {cards.map(([label,count,pct,color]) => (
+              <div key={label} style={{background:"#F3F4F6", borderRadius:7, borderTop:`3px solid ${color}`, textAlign:"center", padding:"15px 8px"}}>
+                <div style={{color, fontWeight:900, letterSpacing:1.1, fontSize:13}}>{label}</div>
+                <div style={{fontWeight:900, fontSize:25, color:"#111827", marginTop:6}}>{Number(count).toLocaleString()}</div>
+                <div style={{color, fontWeight:900, fontSize:14, marginTop:5}}>{Number(pct).toFixed(1)}%</div>
+                <div style={{fontSize:10, color:"#4B5563"}}>students</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{background:"#003291", color:"white", borderRadius:7, padding:"14px 16px", marginTop:12}}>
+            <div style={{color:"#00B0F0", fontWeight:900, letterSpacing:1.2, marginBottom:8}}>ACTION INSIGHTS</div>
+            <div style={{fontSize:13, lineHeight:1.35}}>▶ {onPathway.toLocaleString()} students ({onPct.toFixed(1)}%) are on a CCMR pathway — {offPathway.toLocaleString()} ({offPct.toFixed(1)}%) have no pathway and need immediate outreach.</div>
+            <div style={{fontSize:13, lineHeight:1.35, marginTop:5}}>▶ {top[0]} is the most common pathway with {Number(top[1]).toLocaleString()} students ({Number(top[2]).toFixed(1)}% of enrollment).</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+function DistrictProfilePreview({ chartData = {} }){
+  const categories = chartData?.categories || [];
+  const series = chartData?.series || [];
+  const colors = ["#93C5FD", "#1D4ED8", "#003291", "#00B0F0"];
+  const metricScale = () => 100;
+  return(
+    <div style={{width:"100%",maxWidth:980,margin:"0 auto",fontFamily:"Arial, sans-serif",color:"#1F2933"}}>
+      <div style={{display:"flex",gap:16,margin:"0 0 10px 4px",flexWrap:"wrap"}}>
+        {categories.map((cat,ci)=>(
+          <div key={cat} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:800}}>
+            <span style={{width:12,height:12,borderRadius:3,background:colors[ci%colors.length],display:"inline-block"}} />{cat}
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",border:"2px solid #9CA3AF",borderRadius:8,overflow:"hidden",background:"#fff",height:360}}>
+        {series.map((metric,mi)=>{
+          const available = metric.available ?? (metric.values || []).some(v => v !== null && v !== undefined);
+          return(
+            <div key={metric.name || mi} style={{flex:1,borderRight:mi<series.length-1?"2px solid #9CA3AF":"none",padding:"10px 6px 6px",display:"flex",flexDirection:"column",alignItems:"center",minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:900,color:"#003291",textAlign:"center",lineHeight:1.15,minHeight:32,display:"flex",alignItems:"center"}}>{metric.name}</div>
+              {!available ? (
+                <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",color:"#9CA3AF",fontWeight:900}}>
+                  <div style={{fontSize:24}}>N/A</div>
+                  <div style={{fontSize:10,color:"#6B7280"}}>Column not available</div>
+                </div>
+              ) : (
+                <svg viewBox="0 0 190 280" style={{width:"100%",flex:1,overflow:"visible"}}>
+                  <line x1="12" y1="232" x2="178" y2="232" stroke="#9CA3AF" strokeWidth="2.5" />
+                  {categories.map((cat,ci)=>{
+                    const localMax = metricScale(metric.values || []);
+                    const raw = metric.values?.[ci];
+                    const val = raw === null || raw === undefined ? null : Number(raw);
+                    const x = 30 + ci * (130 / Math.max(1, categories.length-1 || 1));
+                    if(!Number.isFinite(val)){
+                      return <g key={cat}><text x={x} y="205" textAnchor="middle" fontSize="12" fontWeight="900" fill="#9CA3AF">N/A</text><text x={x} y="259" textAnchor="middle" fontSize="11.5" fontWeight="900" fill="#1F2933">{cat}</text></g>
+                    }
+                    const bh = Math.max(14, (Math.max(0,val)/localMax)*205);
+                    const y = 232-bh;
+                    const labelY = Math.max(18, y - 7);
+                    return <g key={cat}><rect x={x-18} y={y} width="36" height={bh} rx="4" fill={colors[ci%colors.length]} /><text x={x} y={labelY} textAnchor="middle" fontSize="12" fontWeight="900" fill="#003291">{val.toFixed(1)}%</text><text x={x} y="259" textAnchor="middle" fontSize="11.5" fontWeight="900" fill="#1F2933">{cat}</text></g>
+                  })}
+                </svg>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PostsecondaryReadinessPreview({ chartData = {} }){
+  const kpis = chartData?.kpis || [];
+  const comparison = chartData?.comparison || [];
+  const gaps = chartData?.opportunity_gaps || [];
+  const metric = chartData?.comparison_metric || "Financial Aid Submitted";
+  const colors = ["#0057B8", "#00A7D8", "#7C3AED", "#D99A00"];
+  return(
+    <div style={{width:"100%",maxWidth:980,margin:"0 auto",fontFamily:"Arial, sans-serif",color:"#07154A"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:10}}>
+        {[0,1,2,3].map(i=>{const k=kpis[i]||{};const accent=k.accent||colors[i];const available=k.available&&k.pct!==null&&k.pct!==undefined;return(
+          <div key={i} style={{background:"#fff",border:"1px solid #E5E7EB",borderLeft:`4px solid ${accent}`,borderRadius:8,padding:"10px 10px",boxShadow:"0 2px 7px rgba(15,23,42,.10)"}}>
+            <div style={{fontSize:11,fontWeight:900,color:"#07154A",height:24}}>{k.label||"Metric"}</div>
+            <div style={{fontSize:28,fontWeight:900,color:accent,lineHeight:1}}>{available?`${Number(k.pct).toFixed(1)}%`:"N/A"}</div>
+            <div style={{fontSize:10,color:"#4B5563",marginTop:5}}>{available?`${Number(k.count||0).toLocaleString()} of ${Number(k.total||0).toLocaleString()} students`:"Column not available"}</div>
+          </div>
+        )})}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"2.05fr .95fr",gap:10}}>
+        <div style={{background:"#fff",border:"1px solid #E5E7EB",borderRadius:8,padding:14,boxShadow:"0 2px 7px rgba(15,23,42,.10)"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <div><div style={{fontSize:18,fontWeight:900}}>Campus Comparison</div><div style={{fontSize:11,color:"#6B7280"}}>% of students with {metric}</div></div>
+            <div style={{fontSize:11,fontWeight:800,border:"1px solid #0057B8",borderRadius:16,padding:"5px 10px"}}>Metric: {metric} ▾</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:7}}>
+            {comparison.slice(0,6).map((r,i)=>(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"22px 210px 1fr 48px",gap:8,alignItems:"center"}}>
+                <div style={{width:18,height:18,borderRadius:"50%",background:"#0057B8",color:"#fff",fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{i+1}</div>
+                <div style={{fontSize:11,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{campusLabel(r.campus)}</div>
+                <div style={{height:14,background:"#EEF2F7",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.max(0,Math.min(100,Number(r.pct)||0))}%`,background:"#07154A"}} /></div>
+                <div style={{fontSize:11,fontWeight:900}}>{Number(r.pct||0).toFixed(1)}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{background:"#fff",border:"1px solid #E5E7EB",borderRadius:8,padding:14,boxShadow:"0 2px 7px rgba(15,23,42,.10)"}}>
+          <div style={{fontSize:18,fontWeight:900}}>Opportunity Gap</div>
+          <div style={{fontSize:11,color:"#6B7280",marginBottom:10}}>Students not yet completed</div>
+          {gaps.slice(0,3).map((g,i)=>{const accent=g.accent||colors[i];return(
+            <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 70px",gap:8,alignItems:"center",background:"#F8FBFF",border:"1px solid #E5E7EB",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+              <div><div style={{fontSize:12,fontWeight:900,color:accent}}>{g.missing_label}</div><div style={{fontSize:10,color:"#6B7280"}}>of {Number(g.total||0).toLocaleString()} students</div></div>
+              <div style={{textAlign:"right",color:accent}}><div style={{fontSize:18,fontWeight:900,lineHeight:1}}>{Number(g.missing_count||0).toLocaleString()}</div><div style={{fontSize:12,fontWeight:900}}>{Number(g.missing_pct||0).toFixed(1)}%</div></div>
+            </div>
+          )})}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function Hb3FundsPreview({ chartData = {}, slideData = {} }){
+  const categories = chartData?.categories || [];
+  const values = chartData?.series?.[0]?.values || [];
+  const hb3StatusFor = (cat) => {
+    const yr = String(cat || "").match(/20\d{2}/)?.[0];
+    if (yr === "2025") return "estimate";
+    if (yr === "2026") return "projected";
+    return "verified";
+  };
+  const statuses = categories.map(c => hb3StatusFor(c));
+  const statusLabel = s => s === "estimate" ? "ESTIMATED" : s === "projected" ? "PROJECTED" : "VERIFIED";
+  const statusColor = s => s === "projected" ? "#00B0F0" : s === "estimate" ? "#2563EB" : "#003291";
+  const fmtMoney = v => {
+    const n = Number(v)||0;
+    if(Math.abs(n) >= 1000000) return `$${(n/1000000).toFixed(1)}M`;
+    if(Math.abs(n) >= 1000) return `$${(n/1000).toFixed(1)}K`;
+    if(Math.abs(n) >= 1) return `$${n.toFixed(1)}M`;
+    if(n > 0) return `$${Math.round(n*1000)}K`;
+    return "$0";
+  };
+  const maxV = Math.max(1, ...values.map(v=>Number(v)||0)) * 1.15;
+  const W=760,H=360,pL=74,pR=18,pT=18,pB=58,cW=W-pL-pR,cH=H-pT-pB;
+  return <div style={{width:"100%",maxWidth:980,margin:"0 auto",fontFamily:"Arial, sans-serif",color:"#1F2933"}}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 220px",gap:16,alignItems:"start"}}>
+      <div>
+        <div style={{fontSize:14,fontWeight:900,color:"#6B7280",letterSpacing:".06em",marginBottom:6}}>HB3 FUNDS BY CLASS YEAR</div>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}}>
+          {[0,1,2,3,4].map(k=>{const t=maxV*k/4; const y=pT+cH-(t/maxV)*cH; return <g key={k}><line x1={pL} y1={y} x2={pL+cW} y2={y} stroke="#E5E7EB"/><text x={pL-8} y={y+4} textAnchor="end" fontSize="10" fill="#9CA3AF">{fmtMoney(t)}</text></g>})}
+          <line x1={pL} y1={pT} x2={pL} y2={pT+cH} stroke="#D1D5DB"/><line x1={pL} y1={pT+cH} x2={pL+cW} y2={pT+cH} stroke="#D1D5DB"/>
+          {categories.map((cat,i)=>{const val=Number(values[i])||0; const bh=(val/maxV)*cH; const gap=cW/Math.max(1,categories.length); const bw=Math.min(70,gap*.42); const cx=pL+gap*i+gap/2; const y=pT+cH-bh; const st=statuses[i]; return <g key={cat}><rect x={cx-bw/2} y={y} width={bw} height={Math.max(3,bh)} rx="4" fill={statusColor(st)}/>{bh>24?<text x={cx} y={y+bh/2+4} textAnchor="middle" fontSize="12" fontWeight="900" fill="#fff">{fmtMoney(val)}</text>:<text x={cx} y={y-6} textAnchor="middle" fontSize="11" fontWeight="900" fill="#003291">{fmtMoney(val)}</text>}<text x={cx} y={pT+cH+20} textAnchor="middle" fontSize="12" fontWeight="900" fill="#111827">{cat}</text><text x={cx} y={pT+cH+38} textAnchor="middle" fontSize="10" fontWeight="800" fill="#6B7280">{statusLabel(st)}</text></g>})}
+        </svg>
+      </div>
+      <div>
+        <div style={{background:"#003291",color:"white",borderRadius:10,padding:"14px 12px",textAlign:"center",marginBottom:10}}><div style={{fontSize:10,fontWeight:900,color:"#00B0F0",letterSpacing:".08em"}}>{categories.length}-YEAR HB3 FUNDS TOTAL</div><div style={{fontSize:28,fontWeight:900,marginTop:4}}>{slideData?.total_funding || fmtMoney(values.reduce((a,b)=>a+(Number(b)||0),0))}</div></div>
+        {categories.slice(0,3).map((cat,i)=>{const st=statuses[i]; return <div key={cat} style={{border:"1px solid #E5E7EB",borderLeft:`4px solid ${statusColor(st)}`,borderRadius:7,padding:"8px 10px",marginBottom:7,background:"#F9FAFB"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:900,color:"#6B7280"}}><span>{String(cat).toUpperCase()}</span><span style={{fontSize:8,color:st==="estimate"?"#D97706":st==="projected"?"#7C3AED":"#16A34A",whiteSpace:"nowrap",minWidth:56,textAlign:"right"}}>{statusLabel(st)}</span></div><div style={{fontSize:22,fontWeight:900,color:statusColor(st)}}>{fmtMoney(values[i])}</div></div>})}
+      </div>
+    </div>
+  </div>
+}
+
+function ChartPreview({ chartData, mode}) {
+  if (chartData?.statuses && chartData?.categories && chartData?.series?.[0]?.name?.toLowerCase?.().includes("hb3")) return <Hb3FundsPreview chartData={chartData} />;
+  if (chartData?.statuses && chartData?.categories && chartData?.series?.length === 1) return <Hb3FundsPreview chartData={chartData} />;
+  if (chartData?.dashboard_type === "postsecondary_readiness") return <PostsecondaryReadinessPreview chartData={chartData} />;
+  if (chartData?.series?.some?.(s => Object.prototype.hasOwnProperty.call(s, "available"))) return <DistrictProfilePreview chartData={chartData} />;
+  if (chartData?.on_pathway !== undefined && chartData?.not_on_pathway !== undefined) return <CcmrPathwayPreview chartData={chartData} />;
   if (!chartData?.series?.length || !chartData?.categories?.length) return null;
-  const { categories, series } = chartData;
+  if(isCcmrAfAccountabilityPreview(chartData)){
+    return <CcmrAfAccountabilityPreview chartData={chartData} />;
+  }
+  const categories = chartData.categories;
+  const series = [...chartData.series].sort((a,b)=>{
+    const rank = n => String(n || "").toLowerCase().includes("not met") ? 0 : (String(n || "").toLowerCase().includes("met") ? 1 : 2);
+    return rank(a?.name) - rank(b?.name);
+  });
   const isHBar = series.length === 1;
-  const W=480, H=isHBar?Math.max(140,categories.length*38+50):220;
-  const pL=isHBar?Math.min(180,Math.max(90,8*Math.max(...categories.map(c=>c.length)))):36;
-  const pB=38,pT=12,pR=20,cW=W-pL-pR,cH=H-pT-pB;
+  const isHStacked = shouldUseHorizontalStackedPreview({series, categories});
+  const W=560, H=(isHBar||isHStacked)?Math.max(150,categories.length*38+58):220;
+  const pL=(isHBar||isHStacked)?Math.min(245,Math.max(140,7*Math.max(...categories.map(c=>campusLabel(c).length)))):36;
+  const pB=42,pT=12,pR=20,cW=W-pL-pR,cH=H-pT-pB;
   const fmt=v=>mode==="percent"?`${Number(v).toFixed(1)}%`:String(Math.round(Number(v)));
   let maxV=0;
-  categories.forEach((_,ci)=>{const s=series.reduce((a,sr)=>a+(Number(sr.values[ci])||0),0);if(s>maxV)maxV=s;});
-  maxV=Math.ceil((maxV*1.1)/10)*10||100;
+  categories.forEach((_,ci)=>{const s=series.reduce((a,sr)=>a+(Number(sr.values?.[ci])||0),0);if(s>maxV)maxV=s;});
+  maxV=mode==="percent"?100:(Math.ceil((maxV*1.1)/10)*10||100);
 
-  if(isHBar){
-    const barH=Math.min(22,Math.max(10,cH/categories.length-7));
+  if(isCcmrYoyCards({categories, series})){
+    const yearColors = ["#003291", "#00B0F0", "#D97706"];
+    const headerColors = ["#003291", "#0F766E", "#00B0F0"];
+    const subtitles = { TSI:"CCMR Overall", IBC:"Industry Based Certification", Enrollment:"College Enrollment" };
+    const fmtValue = v => mode==="percent" ? `${Number(v).toFixed(1)}%` : String(Math.round(Number(v)));
+    return(
+      <div style={{width:"100%",maxWidth:900,margin:"0 auto",fontFamily:"Arial, sans-serif"}}>
+        <div style={{textAlign:"center",fontWeight:900,color:"#003291",letterSpacing:".06em",margin:"4px 0 12px"}}>YEAR-OVER-YEAR COMPARISON</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:12}}>
+          {categories.slice(0,3).map((metric,ci)=>{
+            const maxCard = mode==="percent" ? 100 : Math.max(1,...series.map(s=>Number(s.values?.[ci])||0));
+            const first = Number(series[0]?.values?.[ci])||0;
+            const last = Number(series[Math.min(2,series.length-1)]?.values?.[ci])||0;
+            const diff = last-first;
+            return(
+              <div key={metric} style={{background:"#fff",border:"1px solid #E5E7EB",borderRadius:8,overflow:"hidden",boxShadow:"0 2px 7px rgba(15,23,42,.12)"}}>
+                <div style={{height:52,background:`linear-gradient(135deg, ${headerColors[ci%headerColors.length]}, #003291)`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}>
+                  <div style={{fontSize:18,fontWeight:900,lineHeight:1}}>{metric}</div>
+                  <div style={{fontSize:10,fontWeight:700,marginTop:4}}>({subtitles[metric]||""})</div>
+                </div>
+                <svg viewBox="0 0 260 210" style={{width:"100%",height:210,display:"block"}}>
+                  {[0,20,40,60,80,100].filter(t=>t<=maxCard).map(t=>{const y=170-(t/maxCard)*125;return <g key={t}><line x1="36" y1={y} x2="242" y2={y} stroke="#E5E7EB" strokeDasharray="3 4"/><text x="30" y={y+4} textAnchor="end" fontSize="9" fill="#1F2933">{t}{mode==="percent"?"%":""}</text></g>})}
+                  <line x1="36" y1="45" x2="36" y2="170" stroke="#9CA3AF"/>
+                  <line x1="36" y1="170" x2="242" y2="170" stroke="#9CA3AF"/>
+                  {series.slice(0,3).map((sr,si)=>{
+                    const val=Number(sr.values?.[ci])||0;
+                    const bh=(val/maxCard)*125;
+                    const x=62+si*62;
+                    const y=170-bh;
+                    return <g key={sr.name}><rect x={x} y={y} width="36" height={Math.max(2,bh)} rx="4" fill={yearColors[si%yearColors.length]}/><text x={x+18} y={y-6} textAnchor="middle" fontSize="10" fontWeight="800" fill={yearColors[si%yearColors.length]}>{fmtValue(val)}</text><text x={x+18} y="190" textAnchor="middle" fontSize="9" fill="#1F2933">{sr.name}</text></g>
+                  })}
+                </svg>
+                <div style={{margin:"0 14px 12px",background:"#EFF6FF",borderRadius:6,padding:"7px 8px",textAlign:"center",fontSize:11,fontWeight:800,color:headerColors[ci%headerColors.length]}}>
+                  ▲ {mode==="percent" ? `${diff>=0?"+":""}${diff.toFixed(1)} pp` : `${diff>=0?"+":""}${Math.round(diff)}`} from {series[0]?.name} to {series[Math.min(2,series.length-1)]?.name}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if(isHBar||isHStacked){
+    const barH=Math.min(24,Math.max(10,cH/categories.length-7));
     const gap=(cH-barH*categories.length)/(categories.length+1);
     return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:W,display:"block",margin:"0 auto",overflow:"visible"}}>
       {[0,20,40,60,80,100].filter(v=>v<=maxV).map(v=>{const x=pL+(v/maxV)*cW;return<g key={v}><line x1={x} y1={pT} x2={x} y2={H-pB} stroke="#E5E7EB" strokeWidth="1"/><text x={x} y={H-pB+12} textAnchor="middle" fontSize="9" fill="#9CA3AF">{v}</text></g>;})}
-      {categories.map((cat,ci)=>{const val=Number(series[0].values[ci])||0,bw=(val/maxV)*cW,y=pT+gap+ci*(barH+gap);return(<g key={ci}><text x={pL-5} y={y+barH/2+3} textAnchor="end" fontSize="10" fill="#374151">{cat.length>20?cat.slice(0,20)+"…":cat}</text><rect x={pL} y={y} width={Math.max(bw,2)} height={barH} fill={COLORS[0]} rx="2"/>{bw>24&&<text x={pL+bw/2} y={y+barH/2+3} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#fff">{fmt(val)}</text>}</g>);})}
+      {categories.map((cat,ci)=>{
+        const y=pT+gap+ci*(barH+gap);
+        let xCursor=pL;
+        return(<g key={ci}>
+          <text x={pL-6} y={y+barH/2+3} textAnchor="end" fontSize="10" fill="#374151">{campusLabel(cat)}</text>
+          {series.map((sr,si)=>{
+            const val=Number(sr.values?.[ci])||0;
+            const bw=(val/maxV)*cW;
+            const x=xCursor;
+            xCursor+=bw;
+            return(<g key={si}>
+              <rect x={x} y={y} width={Math.max(bw,2)} height={barH} fill={getSeriesColor(sr?.name,si)} rx="2"/>
+              {bw>36&&<text x={x+bw/2} y={y+barH/2+3} textAnchor="middle" fontSize="8" fontWeight="bold" fill="#fff">{fmt(val)}</text>}
+            </g>);
+          })}
+        </g>);
+      })}
       <line x1={pL} y1={H-pB} x2={W-pR} y2={H-pB} stroke="#D1D5DB"/>
+      {series.map((sr,si)=><g key={si} transform={`translate(${pL+si*120},${H-5})`}><rect x="0" y="-7" width="9" height="9" fill={getSeriesColor(sr?.name,si)}/><text x="12" y="1" fontSize="8" fill="#374151">{sr.name.length>14?sr.name.slice(0,14)+"…":sr.name}</text></g>)}
     </svg>);
   }
+
   const colW=Math.max(12,Math.min(44,cW/categories.length-8)),space=cW/categories.length;
   return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:W,display:"block",margin:"0 auto",overflow:"visible"}}>
     {[0,20,40,60,80,100].filter(v=>v<=maxV).map(v=>{const y=pT+cH-(v/maxV)*cH;return<g key={v}><line x1={pL} y1={y} x2={W-pR} y2={y} stroke="#E5E7EB" strokeWidth="1"/><text x={pL-3} y={y+3} textAnchor="end" fontSize="9" fill="#9CA3AF">{v}</text></g>;})}
-    {categories.map((cat,ci)=>{const cx=pL+ci*space+space/2;let base=0;return(<g key={ci}>{series.map((sr,si)=>{const val=Number(sr.values[ci])||0,bh=(val/maxV)*cH,y=pT+cH-(base+val)/maxV*cH;base+=val;return(<g key={si}><rect x={cx-colW/2} y={y} width={colW} height={bh} fill={COLORS[si%COLORS.length]} rx="1"/>{bh>12&&<text x={cx} y={y+bh/2+3} textAnchor="middle" fontSize="8" fontWeight="bold" fill="#fff">{fmt(val)}</text>}</g>);})}<text x={cx} y={H-pB+12} textAnchor="middle" fontSize="9" fill="#374151">{cat.length>6?cat.slice(0,6)+"…":cat}</text></g>);})}
+    {categories.map((cat,ci)=>{const cx=pL+ci*space+space/2;let base=0;return(<g key={ci}>{series.map((sr,si)=>{const val=Number(sr.values?.[ci])||0,bh=(val/maxV)*cH,y=pT+cH-(base+val)/maxV*cH;base+=val;return(<g key={si}><rect x={cx-colW/2} y={y} width={colW} height={bh} fill={getSeriesColor(sr?.name,si)} rx="1"/>{bh>12&&<text x={cx} y={y+bh/2+3} textAnchor="middle" fontSize="8" fontWeight="bold" fill="#fff">{fmt(val)}</text>}</g>);})}<text x={cx} y={H-pB+12} textAnchor="middle" fontSize="9" fill="#374151">{String(cat).length>6?String(cat).slice(0,6)+"…":cat}</text></g>);})}
     <line x1={pL} y1={pT} x2={pL} y2={H-pB} stroke="#D1D5DB"/><line x1={pL} y1={H-pB} x2={W-pR} y2={H-pB} stroke="#D1D5DB"/>
-    {series.map((sr,si)=><g key={si} transform={`translate(${pL+si*120},${H-5})`}><rect x="0" y="-7" width="9" height="9" fill={COLORS[si%COLORS.length]}/><text x="12" y="1" fontSize="8" fill="#374151">{sr.name.length>14?sr.name.slice(0,14)+"…":sr.name}</text></g>)}
+    {series.map((sr,si)=><g key={si} transform={`translate(${pL+si*120},${H-5})`}><rect x="0" y="-7" width="9" height="9" fill={getSeriesColor(sr?.name,si)}/><text x="12" y="1" fontSize="8" fill="#374151">{sr.name.length>14?sr.name.slice(0,14)+"…":sr.name}</text></g>)}
   </svg>);
 }
 
@@ -79,7 +547,7 @@ const SLIDE_THUMB = {
   //          red date pill bottom-left, EMC logo bottom-right
   "cover": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#0D1B4B"/>
+      <rect width="160" height="90" fill="#003291"/>
       {/* red top/bottom stripes */}
       <rect x="0" y="0"  width="160" height="2.5" fill="#E8192C"/>
       <rect x="0" y="87.5" width="160" height="2.5" fill="#E8192C"/>
@@ -146,14 +614,14 @@ const SLIDE_THUMB = {
   "tsi_status_trends": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
-      <rect x="28" y="7"  width="104" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="28" y="7"  width="104" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
       {/* gradient divider */}
       <defs>
         <linearGradient id="divTSI" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -172,7 +640,7 @@ const SLIDE_THUMB = {
             {/* Approaches (mid) */}
             <rect x={x} y={base-met-app+10}       width={bw} height={app}    rx="1" fill="#93C5FD"/>
             {/* Met (bottom) */}
-            <rect x={x} y={base-met+10}            width={bw} height={met}   rx="1" fill="#0D1B4B"/>
+            <rect x={x} y={base-met+10}            width={bw} height={met}   rx="1" fill="#003291"/>
             {/* year label */}
             <rect x={x+1} y="85" width={bw-2} height="2.5" rx="1" fill="#9CA3AF"/>
           </g>
@@ -181,7 +649,7 @@ const SLIDE_THUMB = {
       {/* baseline */}
       <line x1="8" y1="83" x2="152" y2="83" stroke="#E5E7EB" strokeWidth="1"/>
       {/* legend row */}
-      <rect x="8"  y="88.5" width="7" height="3" rx="1" fill="#0D1B4B"/>
+      <rect x="8"  y="88.5" width="7" height="3" rx="1" fill="#003291"/>
       <rect x="16" y="89"   width="14" height="2" rx="1" fill="#E5E7EB"/>
       <rect x="36" y="88.5" width="7" height="3" rx="1" fill="#93C5FD"/>
       <rect x="44" y="89"   width="22" height="2" rx="1" fill="#E5E7EB"/>
@@ -195,13 +663,13 @@ const SLIDE_THUMB = {
   "tsi_status": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
-      <rect x="26" y="7"  width="108" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="26" y="7"  width="108" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
       <defs>
         <linearGradient id="divTSIs" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -218,7 +686,7 @@ const SLIDE_THUMB = {
             {/* campus label */}
             <rect x="4" y={y+1} width="34" height="6" rx="1" fill="#E5E7EB"/>
             {/* Met */}
-            <rect x={bStart}               y={y} width={bLen*met/100}  height="8" rx="1" fill="#0D1B4B" opacity=".85"/>
+            <rect x={bStart}               y={y} width={bLen*met/100}  height="8" rx="1" fill="#003291" opacity=".85"/>
             {/* Approaches */}
             <rect x={bStart+bLen*met/100}  y={y} width={bLen*app/100}  height="8" rx="1" fill="#93C5FD" opacity=".9"/>
             {/* Not Met */}
@@ -227,7 +695,7 @@ const SLIDE_THUMB = {
         );
       })}
       {/* legend */}
-      <rect x="8"  y="87" width="7" height="3" rx="1" fill="#0D1B4B" opacity=".85"/>
+      <rect x="8"  y="87" width="7" height="3" rx="1" fill="#003291" opacity=".85"/>
       <rect x="16" y="87.5" width="10" height="2" rx="1" fill="#E5E7EB"/>
       <rect x="32" y="87" width="7" height="3" rx="1" fill="#93C5FD" opacity=".9"/>
       <rect x="40" y="87.5" width="18" height="2" rx="1" fill="#E5E7EB"/>
@@ -241,13 +709,13 @@ const SLIDE_THUMB = {
   "tsi_leaderboard": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
-      <rect x="10" y="7"  width="140" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="10" y="7"  width="140" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="40" y="15" width="80"  height="3.5" rx="1"   fill="#00B0F0"/>
       <defs>
         <linearGradient id="divLB" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -263,7 +731,7 @@ const SLIDE_THUMB = {
             <rect x="4" y={y+1} width="32" height="6" rx="1" fill="#E5E7EB"/>
             {/* bar */}
             <rect x="40" y={y} width={maxW*pct} height="8" rx="1.5"
-              fill={isFirst?"#FFC000":"#0D1B4B"}
+              fill={isFirst?"#FFC000":"#003291"}
               opacity={isFirst?1:0.9-i*0.08}/>
             {/* border for gold bar */}
             {isFirst&&<rect x="40" y={y} width={maxW*pct} height="8" rx="1.5" fill="none" stroke="#D97706" strokeWidth="0.7"/>}
@@ -275,17 +743,17 @@ const SLIDE_THUMB = {
     </svg>
   ),
 
-  // ── CCMR YOY BREAKDOWN: white bg, grouped vertical bars (3 colors × 3–4 years)
+  // ── CCMR YOY BREAKDOWN: white bg, three metric cards (3 colors × 3–4 years)
   "ccmr_yoy_breakdown": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
-      <rect x="30" y="7"  width="100" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="30" y="7"  width="100" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
       <defs>
         <linearGradient id="divCCMR" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -294,7 +762,7 @@ const SLIDE_THUMB = {
       {/* 4 year-groups × 3 bars */}
       {[0,1,2,3].map(gi=>{
         const heights=[[30,20,40],[36,24,46],[42,28,52],[47,32,56]][gi];
-        const colors=["#FFC000","#00B0F0","#0D1B4B"];
+        const colors=["#FFC000","#00B0F0","#003291"];
         const gx=14+gi*36;
         return(
           <g key={gi}>
@@ -313,7 +781,7 @@ const SLIDE_THUMB = {
       <rect x="16" y="89.5" width="12" height="2" rx="1" fill="#E5E7EB"/>
       <rect x="32" y="89" width="7" height="3" rx="1" fill="#00B0F0"/>
       <rect x="40" y="89.5" width="10" height="2" rx="1" fill="#E5E7EB"/>
-      <rect x="54" y="89" width="7" height="3" rx="1" fill="#0D1B4B"/>
+      <rect x="54" y="89" width="7" height="3" rx="1" fill="#003291"/>
       <rect x="62" y="89.5" width="8" height="2" rx="1" fill="#E5E7EB"/>
     </svg>
   ),
@@ -323,9 +791,9 @@ const SLIDE_THUMB = {
   "ccmr_af_status": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* navy left sidebar */}
-      <rect x="0" y="0" width="44" height="90" fill="#0D1B4B"/>
+      <rect x="0" y="0" width="44" height="90" fill="#003291"/>
       {/* logo in sidebar */}
       <circle cx="22" cy="12" r="7"   fill="none" stroke="#2d5aad" strokeWidth="1.5"/>
       <circle cx="22" cy="12" r="4.2" fill="none" stroke="#E8192C"  strokeWidth="1.2"/>
@@ -342,12 +810,12 @@ const SLIDE_THUMB = {
       <rect x="8" y="66" width="24" height="3"  rx="1" fill="#00B0F0" opacity=".7"/>
       <rect x="8" y="71" width="28" height="5"  rx="1" fill="#ffffff"/>
       {/* right content title */}
-      <rect x="50" y="8"  width="100" height="5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="50" y="8"  width="100" height="5" rx="1.5" fill="#003291"/>
       <rect x="50" y="16" width="76"  height="3" rx="1"   fill="#4B5563"/>
       {/* divider */}
       <defs>
         <linearGradient id="divAF" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="70%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -379,14 +847,14 @@ const SLIDE_THUMB = {
   "ccmr_pathway": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
       <rect x="6"  y="7"  width="60" height="3.5" rx="1" fill="#E8192C"/>
-      <rect x="6"  y="13" width="50" height="5"   rx="1" fill="#0D1B4B"/>
+      <rect x="6"  y="13" width="50" height="5"   rx="1" fill="#003291"/>
       <rect x="6"  y="20" width="70" height="3"   rx="1" fill="#4B5563" opacity=".6"/>
       <defs>
         <linearGradient id="divCP" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -410,10 +878,10 @@ const SLIDE_THUMB = {
       {[0,1,2,3,4,5].map(i=>{
         const barW=[80,64,72,50,58,42][i];
         const y=29+i*9;
-        const colors=["#0D1B4B","#00B0F0","#0D1B4B","#00B0F0","#FFC000","#0D1B4B"];
+        const colors=["#003291","#00B0F0","#003291","#00B0F0","#FFC000","#003291"];
         return(
           <g key={i}>
-            <rect x="46" y={y} width="52" height="7" rx="1" fill="#0D1B4B" opacity=".1"/>
+            <rect x="46" y={y} width="52" height="7" rx="1" fill="#003291" opacity=".1"/>
             <rect x="46" y={y} width={barW*0.82} height="7" rx="1" fill={colors[i]} opacity=".8"/>
             <rect x="100" y={y+1} width="54" height="5" rx="1" fill="#E5E7EB" opacity=".4"/>
             <rect x="100" y={y+1} width="32" height="5" rx="1" fill={colors[i]} opacity=".35"/>
@@ -427,13 +895,13 @@ const SLIDE_THUMB = {
   "ccmr_pathway_full": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
-      <rect x="10" y="7"  width="140" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="10" y="7"  width="140" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="40" y="15" width="80"  height="3.5" rx="1"   fill="#00B0F0"/>
       <defs>
         <linearGradient id="divPF" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -443,7 +911,7 @@ const SLIDE_THUMB = {
       {[0,1,2,3,4,5,6].map(i=>{
         const w1=[90,74,58,82,48,64,38][i];
         const w2=[w1*0.65,w1*0.72,w1*0.58,w1*0.80,w1*0.50,w1*0.62,w1*0.45].map(v=>Math.round(v))[i];
-        const colors=["#0D1B4B","#00B0F0","#0D1B4B","#00B0F0","#FFC000","#0D1B4B","#00B0F0"];
+        const colors=["#003291","#00B0F0","#003291","#00B0F0","#FFC000","#003291","#00B0F0"];
         return(
           <g key={i}>
             {/* label */}
@@ -463,9 +931,9 @@ const SLIDE_THUMB = {
   "district_profile": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header row */}
-      <rect x="6"  y="7"  width="110" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="6"  y="7"  width="110" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="6"  y="15" width="50"  height="3"   rx="1"   fill="#00B0F0"/>
       <rect x="138" y="8" width="18"  height="4"   rx="1"   fill="#6B7280" opacity=".4"/>
       {/* color legend row */}
@@ -473,11 +941,11 @@ const SLIDE_THUMB = {
       <rect x="15" y="21" width="16" height="2" rx="1" fill="#E5E7EB"/>
       <rect x="34" y="20" width="7" height="4" rx="1" fill="#1D4ED8"/>
       <rect x="43" y="21" width="16" height="2" rx="1" fill="#E5E7EB"/>
-      <rect x="62" y="20" width="7" height="4" rx="1" fill="#0D1B4B"/>
+      <rect x="62" y="20" width="7" height="4" rx="1" fill="#003291"/>
       <rect x="71" y="21" width="16" height="2" rx="1" fill="#E5E7EB"/>
       <defs>
         <linearGradient id="divDP" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -495,14 +963,14 @@ const SLIDE_THUMB = {
             {/* tile border */}
             <rect x={x} y="30" width={tileW} height="56" rx="2" fill="#F9FAFB" stroke="#9CA3AF" strokeWidth="1.2"/>
             {/* column title */}
-            <rect x={x+3} y="33" width={tileW-6} height="7" rx="1" fill="#0D1B4B" opacity=".8"/>
+            <rect x={x+3} y="33" width={tileW-6} height="7" rx="1" fill="#003291" opacity=".8"/>
             {/* 3-bar mini chart */}
             {/* bar 2023 (lightest) */}
             <rect x={x+4}    y={88-barH1}   width="6" height={barH1}   rx="1" fill="#93C5FD"/>
             {/* bar 2024 */}
             <rect x={x+12}   y={88-barH2}   width="6" height={barH2}   rx="1" fill="#1D4ED8"/>
             {/* bar 2025 (darkest) */}
-            <rect x={x+20}   y={88-barH3}   width="6" height={barH3}   rx="1" fill="#0D1B4B"/>
+            <rect x={x+20}   y={88-barH3}   width="6" height={barH3}   rx="1" fill="#003291"/>
             {/* baseline */}
             <line x1={x+2} y1="85" x2={x+tileW-2} y2="85" stroke="#D1D5DB" strokeWidth="0.8"/>
           </g>
@@ -511,17 +979,17 @@ const SLIDE_THUMB = {
     </svg>
   ),
 
-  // ── POSTSECONDARY ENROLLMENT: white bg, stacked horizontal bars (4YR/2YR/Not)
+  // ── POSTSECONDARY READINESS: dashboard cards, campus comparison, opportunity gaps
   "postsecondary_enrollment": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
-      <rect x="18" y="7"  width="124" height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="18" y="7"  width="124" height="5.5" rx="1.5" fill="#003291"/>
       <rect x="50" y="15" width="60"  height="3.5" rx="1"   fill="#00B0F0"/>
       <defs>
         <linearGradient id="divPSE" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -537,7 +1005,7 @@ const SLIDE_THUMB = {
           <g key={i}>
             <rect x="4" y={y+1} width="34" height="7" rx="1" fill="#E5E7EB"/>
             {/* 4YR */}
-            <rect x={bStart}                  y={y} width={bLen*p4}  height="9" rx="1" fill="#0D1B4B" opacity=".85"/>
+            <rect x={bStart}                  y={y} width={bLen*p4}  height="9" rx="1" fill="#003291" opacity=".85"/>
             {/* 2YR */}
             <rect x={bStart+bLen*p4}          y={y} width={bLen*p2}  height="9" rx="1" fill="#00B0F0" opacity=".85"/>
             {/* Not Enrolled */}
@@ -546,7 +1014,7 @@ const SLIDE_THUMB = {
         );
       })}
       {/* legend */}
-      <rect x="8"  y="87" width="7" height="3" rx="1" fill="#0D1B4B" opacity=".85"/>
+      <rect x="8"  y="87" width="7" height="3" rx="1" fill="#003291" opacity=".85"/>
       <rect x="16" y="87.5" width="10" height="2" rx="1" fill="#E5E7EB"/>
       <rect x="30" y="87" width="7" height="3" rx="1" fill="#00B0F0" opacity=".85"/>
       <rect x="38" y="87.5" width="8" height="2" rx="1" fill="#E5E7EB"/>
@@ -560,14 +1028,14 @@ const SLIDE_THUMB = {
   "hb3_funds": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
       <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
+      <rect width="160" height="3.5" fill="#003291"/>
       {/* header */}
       <rect x="6"  y="7"  width="50"  height="3.5" rx="1" fill="#00B0F0"/>
-      <rect x="6"  y="13" width="90"  height="5.5" rx="1.5" fill="#0D1B4B"/>
+      <rect x="6"  y="13" width="90"  height="5.5" rx="1.5" fill="#003291"/>
       <rect x="6"  y="21" width="50"  height="3.5" rx="1" fill="#00B0F0" opacity=".6"/>
       <defs>
         <linearGradient id="divHB3" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="#0D1B4B"/>
+          <stop offset="0%"   stopColor="#003291"/>
           <stop offset="60%"  stopColor="#00B0F0"/>
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
         </linearGradient>
@@ -580,7 +1048,7 @@ const SLIDE_THUMB = {
         const x=10+gi*32;
         return(
           <g key={gi}>
-            <rect x={x}    y={84-hEco} width="12" height={hEco} rx="1.5" fill="#0D1B4B" opacity=".85"/>
+            <rect x={x}    y={84-hEco} width="12" height={hEco} rx="1.5" fill="#003291" opacity=".85"/>
             <rect x={x+14} y={84-hNon} width="12" height={hNon} rx="1.5" fill="#00B0F0" opacity=".85"/>
             <rect x={x+2}  y="86" width="22" height="3" rx="1" fill="#E5E7EB"/>
           </g>
@@ -589,63 +1057,16 @@ const SLIDE_THUMB = {
       <line x1="8" y1="84" x2="138" y2="84" stroke="#E5E7EB" strokeWidth="1"/>
       {/* right sidebar */}
       <rect x="142" y="30" width="14" height="4"  rx="1" fill="#00B0F0" opacity=".7"/>
-      <rect x="142" y="37" width="14" height="8"  rx="1" fill="#0D1B4B"/>
+      <rect x="142" y="37" width="14" height="8"  rx="1" fill="#003291"/>
       <rect x="142" y="48" width="14" height="3"  rx="1" fill="#9CA3AF"/>
       <rect x="142" y="54" width="14" height="14" rx="2" fill="#FFC000" opacity=".2" stroke="#FFC000" strokeWidth="1"/>
       <rect x="143" y="57" width="12" height="3"  rx="1" fill="#FFC000"/>
       <rect x="143" y="62" width="10" height="3"  rx="1" fill="#D97706" opacity=".6"/>
       {/* legend */}
-      <rect x="8"  y="89" width="7" height="3" rx="1" fill="#0D1B4B" opacity=".85"/>
+      <rect x="8"  y="89" width="7" height="3" rx="1" fill="#003291" opacity=".85"/>
       <rect x="16" y="89.5" width="20" height="2" rx="1" fill="#E5E7EB"/>
       <rect x="42" y="89" width="7" height="3" rx="1" fill="#00B0F0" opacity=".85"/>
       <rect x="50" y="89.5" width="22" height="2" rx="1" fill="#E5E7EB"/>
-    </svg>
-  ),
-
-  // ── BY THE NUMBERS: white bg, red eyebrow + big title,
-  //    3 circles (navy / cyan / yellow) each with large count inside
-  "by_the_numbers": (
-    <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#ffffff"/>
-      <rect width="160" height="3.5" fill="#0D1B4B"/>
-      {/* eyebrow */}
-      <rect x="26" y="8"  width="108" height="3.5" rx="1"   fill="#E8192C"/>
-      {/* big title */}
-      <rect x="22" y="14" width="116" height="7"   rx="2"   fill="#0D1B4B"/>
-      {/* gradient divider */}
-      <defs>
-        <linearGradient id="divBTN" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%"   stopColor="transparent"/>
-          <stop offset="35%"  stopColor="#0D1B4B"/>
-          <stop offset="65%"  stopColor="#00B0F0"/>
-          <stop offset="100%" stopColor="transparent"/>
-        </linearGradient>
-      </defs>
-      <rect x="6" y="24" width="148" height="1.5" fill="url(#divBTN)"/>
-      {/* 3 metric circles */}
-      {[28,80,132].map((cx,i)=>{
-        const outer=[24,24,24][i];
-        const fills=["#0D1B4B","#00B0F0","#FFC000"];
-        const rings=["#E5E7EB","#DBEAFE","#FEF9C3"];
-        return(
-          <g key={i}>
-            {/* outer ring decoration (dashed arc style) */}
-            <circle cx={cx} cy="58" r={outer+3} fill="none" stroke="#00B0F0"
-              strokeWidth="1.5" strokeDasharray={[`${3.14*2*(outer+3)*0.8}`,`${3.14*2*(outer+3)*0.2}`][0]}
-              opacity=".4"/>
-            {/* colored ring */}
-            <circle cx={cx} cy="58" r={outer} fill={rings[i]} stroke={fills[i]} strokeWidth="2.5"/>
-            {/* filled inner bg */}
-            <circle cx={cx} cy="58" r={outer-4} fill={fills[i]}/>
-            {/* count placeholder */}
-            <rect x={cx-12} y="52" width="24" height="7" rx="1.5" fill="#ffffff" opacity=".9"/>
-            {/* icon badge bottom-left */}
-            <circle cx={cx-outer+4} cy={58+outer-4} r="5" fill="#E8192C"/>
-            {/* label below circle */}
-            <rect x={cx-18} y="85" width="36" height="3" rx="1" fill="#E5E7EB"/>
-          </g>
-        );
-      })}
     </svg>
   ),
 
@@ -653,7 +1074,7 @@ const SLIDE_THUMB = {
   //    centered "Thank You" title, EMC sub-label, mission tagline
   "outro": (
     <svg viewBox="0 0 160 90" style={{width:"100%",height:"auto",display:"block"}}>
-      <rect width="160" height="90" fill="#0D1B4B"/>
+      <rect width="160" height="90" fill="#003291"/>
       {/* red top/bottom stripes */}
       <rect x="0" y="0"    width="160" height="2.5" fill="#E8192C"/>
       <rect x="0" y="87.5" width="160" height="2.5" fill="#E8192C"/>
@@ -682,18 +1103,17 @@ const SLIDE_THUMB = {
 const SLIDE_INFO = {
   "cover":                   {name:"Cover Slide",           icon:"🎯", desc:"Title slide with district name, meeting type, and date", needsData:false},
   "mission":                 {name:"EMC Mission",            icon:"🌟", desc:"Every Learner On A Path To A Living Wage", needsData:false},
-  "district_profile":        {name:"District Profile",       icon:"🏛️", desc:"6-metric overview: CCMR, TSI, IBC, Financial Aid, Enrollment, Associate Degree", needsData:true},
+  "district_profile":        {name:"District Profile",       icon:"🏛️", desc:"6-metric profile by cohort: CCMR, TSI, IBC, financial aid, enrollment, degree", needsData:true},
   "ccmr_pathway_full":       {name:"CCMR All Qualifiers",    icon:"🗺️", desc:"Full CCMR pathway breakdown: TSI ELAR, TSI Math, IBC, Dual Credit, AP/IB, OnRamps, and more", needsData:true},
   "outro":                   {name:"Outro / Thank You",    icon:"🙏", desc:"Closing thank you slide with district name and EMC mission", needsData:false},
-  "by_the_numbers":          {name:"By the Numbers",         icon:"🔢", desc:"3-circle summary: students served, TSI met, HB3 projection", needsData:true},
   "hb3_funds":               {name:"HB3 Outcomes Bonus",     icon:"💰", desc:"HB3 funding by class year with verified/estimate/projected status", needsData:true},
-  "tsi_status_trends":       {name:"TSI Status Trends", icon:"📈", desc:"TSI assessment results over multiple years", needsData:true},
+  "tsi_status_trends":       {name:"TSI Status Trends", icon:"📈", desc:"TSI Met and Not Met trends by year", needsData:true},
   "tsi_status":              {name:"TSI Status",        icon:"📊", desc:"TSI results by campus for the latest year", needsData:true},
   "tsi_leaderboard":         {name:"TSI Leaderboard",   icon:"🏆", desc:"Ranked horizontal bar chart of TSI rates", needsData:true},
-  "ccmr_yoy_breakdown":      {name:"CCMR YOY Growth",   icon:"📉", desc:"CCMR indicators (TSI, IBC, Enrollment) year-over-year", needsData:true},
+  "ccmr_yoy_breakdown":      {name:"CCMR YOY Breakdown",   icon:"📉", desc:"CCMR indicators (TSI, IBC, Enrollment) year-over-year", needsData:true},
   "ccmr_af_status":          {name:"CCMR A-F Status",   icon:"🎓", desc:"Met / Approaches / Not Met with progress to 90% goal", needsData:true},
   "ccmr_pathway":            {name:"CCMR Pathway Analysis",icon:"🛤️",desc:"Students on/off CCMR pathway by type", needsData:true},
-  "postsecondary_enrollment":{name:"Postsecondary Enrollment",icon:"🏫",desc:"College enrollment rates (4YR, 2YR, etc.) by school", needsData:true},
+  "postsecondary_enrollment":{name:"Postsecondary Readiness",icon:"🎓",desc:"College application, financial aid, FAFSA, and acceptance readiness dashboard", needsData:true},
 };
 
 const DISTRICT_OPTIONS = [
@@ -748,6 +1168,24 @@ export default function App(){
   const [showSlidePreview,setShowSlidePreview]=useState(false);
   const [fetchingPreview,setFetchingPreview]=useState(false);
   const [buildingPres,setBuildingPres]=useState(false);
+  const [buildingPptx,setBuildingPptx]=useState(false);
+
+  // Full-presentation quick build state
+  const presBatchFileRef = useRef(null);
+  const [presBatchFiles,setPresBatchFiles]=useState([]); // [{id,name,size,upload_path,error}]
+  const [presBatchInspecting,setPresBatchInspecting]=useState(false);
+  const [presFileAssignments,setPresFileAssignments]=useState({}); // {slideIndex: upload_path}
+  const [quickBuilding,setQuickBuilding]=useState(""); // "html" | "pptx" | ""
+  const [presQuickMeta,setPresQuickMeta]=useState({
+    District:"",
+    meeting_type:"Partner Meeting",
+    subtitle:"",
+    month:new Date().toLocaleString("en-US", {month:"long"}),
+    year_label:String(new Date().getFullYear()),
+    data_source:"District Salesforce",
+    as_of_date:todayISO(),
+    footnote:"",
+  });
 
   // Single slide / current build step
   const [slideFields,setSlideFields]=useState(null);
@@ -858,6 +1296,10 @@ export default function App(){
     setSelectedType(type);
     resetSlideState();
     if(!type)return;
+    // Immediately apply the local slide data requirement so pre-built slides never
+    // flash or fall back into the upload-file workflow while backend fields load.
+    const localInfo = SLIDE_INFO[type];
+    if(localInfo) setNeedsData(localInfo.needsData !== false);
     try{
       const r=await axios.get(`${API}/slide-fields/${type}`);
       setSlideFields(r.data);
@@ -1002,7 +1444,7 @@ export default function App(){
       setStatus({type:"",msg:""});
     }catch(err){
       const msg=err.response?.data?.detail?.error||err.response?.data?.detail||"Preview failed.";
-      setStatus({type:"error",msg:`✗ ${msg}`});
+      setStatus({type:"error",msg:`✗ ${err?.message || msg}`});
     }finally{setPreviewing(false);}
   }
 
@@ -1090,6 +1532,37 @@ export default function App(){
       setStatus({type:"success",msg:`✓ Slide opened in new tab — Ctrl+P to save as PDF.`});
     }catch(err){
       let msg="Generation failed.";
+      if(err.response){try{const p=JSON.parse(await err.response.data.text());msg=p?.detail?.error||p?.detail||msg;}catch{msg=`Server error (${err.response.status})`;}}
+      setStatus({type:"error",msg:`✗ ${msg}`});
+    }finally{setGenerating(false);}
+  }
+
+  async function handleGeneratePptx(){
+    setGenerating(true);
+    setStatus({type:"loading",msg:"Generating editable PowerPoint slide…"});
+    await new Promise(r => setTimeout(r, 30));
+    try{
+      const fd=new FormData();
+      fd.append("slide_type",selectedType);
+      if(inspection?.upload_path) fd.append("upload_path",inspection.upload_path);
+      fd.append("selected_districts",JSON.stringify(selectedDistricts));
+      fd.append("selected_campuses",JSON.stringify(selectedCampuses));
+      fd.append("overrides",JSON.stringify(buildOverrides()));
+      fd.append("manual_text",JSON.stringify({...manualText, footnote: composeFootnote()}));
+      fd.append("mode",mode);fd.append("aggregation_level",aggLevel);
+      if(preview){
+        fd.append("preview_slide_data",JSON.stringify(editLabels));
+        fd.append("preview_chart_data",JSON.stringify({...preview.chart_data,categories:editCategories,series:editSeries}));
+        fd.append("preview_insights",JSON.stringify(editInsights));
+      }
+      const r=await axios.post(`${API}/generate-slide-pptx`,fd,{responseType:"blob",timeout:90000});
+      const disp=r.headers["content-disposition"]||"";
+      const match=disp.match(/filename="?([^";\n]+)"?/);
+      const fname=match?match[1]:`${selectedType}.pptx`;
+      downloadBlob(r.data, fname, "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      setStatus({type:"success",msg:`✓ Editable PowerPoint slide downloaded.`});
+    }catch(err){
+      let msg="PowerPoint generation failed.";
       if(err.response){try{const p=JSON.parse(await err.response.data.text());msg=p?.detail?.error||p?.detail||msg;}catch{msg=`Server error (${err.response.status})`;}}
       setStatus({type:"error",msg:`✗ ${msg}`});
     }finally{setGenerating(false);}
@@ -1195,6 +1668,160 @@ export default function App(){
     }
   }
 
+  function downloadBlob(data, fileName, mimeType){
+    const blob = new Blob([data], {type:mimeType});
+    const url = window.URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), {href:url, download:fileName});
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>window.URL.revokeObjectURL(url), 30000);
+    return url;
+  }
+
+  async function handlePresentationFiles(e){
+    const files = Array.from(e.target.files || []);
+    if(!files.length) return;
+    setPresBatchInspecting(true);
+    setStatus({type:"loading",msg:`Uploading ${files.length} presentation data file${files.length!==1?"s":""}…`});
+    const uploaded=[];
+    for(const f of files){
+      const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      try{
+        const firstDataSlide = presSlides.find(s => (SLIDE_INFO[s.slide_type]?.needsData !== false));
+        const fd = new FormData();
+        fd.append("slide_type", firstDataSlide?.slide_type || "district_profile");
+        fd.append("file", f);
+        const r = await axios.post(`${API}/inspect-file`, fd, {timeout:90000});
+        uploaded.push({id,name:f.name,size:f.size,upload_path:r.data.upload_path,inspection:r.data,error:""});
+      }catch(err){
+        uploaded.push({id,name:f.name,size:f.size,upload_path:"",inspection:null,error:err.response?.data?.detail||"Could not upload/inspect this file."});
+      }
+    }
+    setPresBatchFiles(prev=>[...prev,...uploaded]);
+    setPresFileAssignments(prev=>{
+      const next={...prev};
+      const firstGood = uploaded.find(x=>x.upload_path) || presBatchFiles.find(x=>x.upload_path);
+      if(firstGood){
+        presSlides.forEach((sl,i)=>{
+          if(SLIDE_INFO[sl.slide_type]?.needsData !== false && !next[i]) next[i]=firstGood.upload_path;
+        });
+      }
+      return next;
+    });
+    setStatus({type:uploaded.some(x=>x.error)?"error":"success",msg:uploaded.some(x=>x.error)?"Some files could not be inspected. You can still use the files that uploaded successfully.":`✓ Uploaded ${uploaded.length} file${uploaded.length!==1?"s":""}.`});
+    setPresBatchInspecting(false);
+    if(presBatchFileRef.current) presBatchFileRef.current.value="";
+  }
+
+  function removePresentationFile(uploadPath){
+    setPresBatchFiles(prev=>prev.filter(f=>f.upload_path!==uploadPath));
+    setPresFileAssignments(prev=>{
+      const next={...prev};
+      Object.keys(next).forEach(k=>{ if(next[k]===uploadPath) delete next[k]; });
+      return next;
+    });
+  }
+
+  function buildAutoPresentationPayload(){
+    const firstFile = presBatchFiles.find(f=>f.upload_path)?.upload_path || "";
+    return presSlides.map((s,i)=>{
+      const needs = SLIDE_INFO[s.slide_type]?.needsData !== false;
+      const uploadPath = needs ? (presFileAssignments[i] || firstFile) : "";
+      const fileInfo = presBatchFiles.find(f => f.upload_path === uploadPath);
+      const usableSheets = (fileInfo?.inspection?.districts || []).filter(d => d.usable).map(d => d.sheet_name);
+      return {
+        slide_type:s.slide_type,
+        upload_path:uploadPath,
+        selected_districts: usableSheets.length ? usableSheets : undefined,
+        selected_campuses:{},
+        manual_text:{
+          District:(presQuickMeta.District||""),
+          meeting_type:(presQuickMeta.meeting_type||""),
+          subtitle:(presQuickMeta.subtitle||""),
+          month:presQuickMeta.month,
+          year_label:presQuickMeta.year_label,
+          data_source:presQuickMeta.data_source,
+          as_of_date:presQuickMeta.as_of_date,
+          footnote:presQuickMeta.footnote
+        },
+        mode:s.slide_type==="hb3_funds" ? "count" : "percent",
+        aggregation_level:SLIDE_INFO[s.slide_type]?.default_agg || undefined,
+      };
+    });
+  }
+
+  function validateAutoPresentationPayload(plan){
+    const missing=[];
+    plan.forEach((p,i)=>{
+      const needs = SLIDE_INFO[p.slide_type]?.needsData !== false;
+      if(needs && !p.upload_path) missing.push(`${i+1}. ${SLIDE_INFO[p.slide_type]?.name||p.slide_type}`);
+    });
+    if(plan.some(p=>p.slide_type==="cover")){
+      const missingIntro=[];
+      if(!String(presQuickMeta.District||"").trim()) missingIntro.push("District / title");
+      if(!String(presQuickMeta.meeting_type||"").trim()) missingIntro.push("Meeting type");
+      if(!String(presQuickMeta.month||"").trim()) missingIntro.push("Month");
+      if(!String(presQuickMeta.year_label||"").trim()) missingIntro.push("Year");
+      if(missingIntro.length) missing.push(`Cover Slide info: ${missingIntro.join(", ")}`);
+    }
+    return missing;
+  }
+
+  function submitQuickPresentationForm(kind, plan){
+    const endpoint = kind === "pptx" ? "generate-presentation-pptx-auto" : "generate-presentation-auto";
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = `${API}/${endpoint}`;
+    form.target = "_blank";
+    form.style.display = "none";
+
+    const payloadInput = document.createElement("input");
+    payloadInput.type = "hidden";
+    payloadInput.name = "payload";
+    payloadInput.value = JSON.stringify(plan);
+    form.appendChild(payloadInput);
+
+    const autoInput = document.createElement("input");
+    autoInput.type = "hidden";
+    autoInput.name = "auto_inserts";
+    autoInput.value = "true";
+    form.appendChild(autoInput);
+
+    document.body.appendChild(form);
+    form.submit();
+    setTimeout(()=>form.remove(), 1500);
+  }
+
+  async function quickGeneratePresentation(kind, event){
+    if(event){
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    setStatus({type:"loading",msg:kind==="pptx"?"Starting full PowerPoint generation…":"Starting full HTML generation…"});
+    if(!presSlides.length){setStatus({type:"error",msg:"Select at least one slide first."});return;}
+    const plan = buildAutoPresentationPayload();
+    const missing = validateAutoPresentationPayload(plan);
+    if(missing.length){
+      setStatus({type:"error",msg:`Upload/assign data files before quick generation. Missing file for: ${missing.join(", ")}`});
+      return;
+    }
+    try{
+      setQuickBuilding(kind);
+      submitQuickPresentationForm(kind, plan);
+      setStatus({
+        type:"success",
+        msg:kind==="pptx"
+          ? "✓ PowerPoint generation started in a new browser tab. If it does not download, check the new tab for the backend error."
+          : "✓ HTML generation started in a new browser tab. If the deck does not open, check the new tab for the backend error."
+      });
+      setTimeout(()=>setQuickBuilding(""), 1800);
+    }catch(err){
+      setQuickBuilding("");
+      setStatus({type:"error",msg:`✗ Could not start ${kind==="pptx"?"PowerPoint":"HTML"} generation: ${err?.message || err}`});
+    }
+  }
+
   // ── Build presentation ────────────────────────────────────────────────────
   async function buildPresentation(){
     setBuildingPres(true);
@@ -1214,6 +1841,23 @@ export default function App(){
     }catch(err){
       setStatus({type:"error",msg:`✗ Build failed.`});
     }finally{setBuildingPres(false);}
+  }
+
+  async function buildPresentationPptx(){
+    setBuildingPptx(true);
+    setStatus({type:"loading",msg:"Building editable PowerPoint…"});
+    await new Promise(r => setTimeout(r, 30));
+    try{
+      const approved=presSlides.filter(s=>s.status==="approved"&&s.config);
+      if(!approved.length){setStatus({type:"error",msg:"No approved slides."});return;}
+      const payload=JSON.stringify(approved.map(s=>s.config));
+      const fd=new FormData();fd.append("payload",payload);
+      const r=await axios.post(`${API}/generate-presentation-pptx`,fd,{responseType:"blob",timeout:120000});
+      downloadBlob(r.data, "EMC_Presentation_Editable.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      setStatus({type:"success",msg:`✓ Editable PowerPoint downloaded (${approved.length} approved slides).`});
+    }catch(err){
+      setStatus({type:"error",msg:`✗ Editable PowerPoint build failed.`});
+    }finally{setBuildingPptx(false);}
   }
 
   function buildOverrides(){
@@ -1380,11 +2024,11 @@ export default function App(){
     );
   }
 
-    const FULLY_STATIC_TYPES = ["mission","methodology","section_divider","agenda","outro"];
+    const FULLY_STATIC_TYPES = ["cover","mission","methodology","section_divider","agenda","outro"];
   // ── Derived ───────────────────────────────────────────────────────────────
   const usableDistricts=(inspection?.districts||[]).filter(d=>d.usable);
   const hardMissing=(colDetection?.fields||[]).filter(f=>!f.optional&&!colOverrides[f.key]);
-  const canPreview=!needsData||( !!colDetection&&hardMissing.length===0&&!detecting&&!previewing&&selectedDistricts.length>0);
+  const canPreview=!needsData||( !!colDetection&&hardMissing.length===0&&!detecting&&selectedDistricts.length>0);
   const canGenerate=canPreview&&!!preview&&!generating;
   const allSlides=Object.values(categoryMenu).flat();
   const curPresSlide=presSlides[presCurrentIdx];
@@ -1646,7 +2290,7 @@ export default function App(){
             {presPhase==="plan"&&(
               <div className="card">
                 <div className="card-header"><Num n="1"/><h2 className="card-title">Choose slides for your presentation</h2></div>
-                <p style={{fontSize:13,color:"#6B7280",marginBottom:18}}>Select the slides to include. You'll configure and approve each one individually before the final presentation is assembled.</p>
+                <p style={{fontSize:13,color:"#6B7280",marginBottom:18}}>Select the slides to include. You can either configure/approve each slide one-by-one, or upload data files here and generate the full presentation immediately without previewing every slide.</p>
                 <div className="pres-slide-picker">
                   {Object.entries(categoryMenu).map(([cat,slides])=>(
                     <div key={cat} className="pres-category">
@@ -1677,6 +2321,101 @@ export default function App(){
                   ))}
                 </div>
 
+
+                {presSlides.length>0&&(
+                  <div style={{marginTop:18,background:"#F8FAFC",border:"1px solid #E5E7EB",borderRadius:10,padding:"16px 18px"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}>
+                      <div>
+                        <div style={{fontWeight:900,color:"#003291",fontSize:15}}>Quick full-presentation build</div>
+                        <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>Upload one or more data files, assign them to selected data slides, then generate the full deck without previewing each slide.</div>
+                      </div>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                        <input ref={presBatchFileRef} type="file" accept=".xlsx,.xls,.csv" multiple onChange={handlePresentationFiles} style={{display:"none"}}/>
+                        <button type="button" className="recalc-btn" onClick={()=>presBatchFileRef.current?.click()} disabled={presBatchInspecting||!!quickBuilding}>
+                          {presBatchInspecting?<><span className="spinner dark"/>Uploading…</>:"📁 Upload multiple files"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(5, minmax(120px, 1fr))",gap:10,marginBottom:12}}>
+                      <input className="text-input" placeholder="District / Organization" value={presQuickMeta.District||""} onChange={e=>setPresQuickMeta(p=>({...p,District:e.target.value}))}/>
+                      <select className="text-input" value={presQuickMeta.month||""} onChange={e=>setPresQuickMeta(p=>({...p,month:e.target.value}))}>{MONTH_OPTIONS.map(m=><option key={m} value={m}>{m}</option>)}</select>
+                      <select className="text-input" value={presQuickMeta.year_label||""} onChange={e=>setPresQuickMeta(p=>({...p,year_label:e.target.value}))}>{YEAR_OPTIONS.map(y=><option key={y} value={y}>{y}</option>)}</select>
+                      <input className="text-input" placeholder="Source" value={presQuickMeta.data_source||""} onChange={e=>setPresQuickMeta(p=>({...p,data_source:e.target.value}))}/>
+                      <input className="text-input" type="date" value={presQuickMeta.as_of_date||todayISO()} onChange={e=>setPresQuickMeta(p=>({...p,as_of_date:e.target.value}))}/>
+                    </div>
+
+                    {presSlides.some(s=>s.slide_type==="cover")&& (
+                      <div style={{background:"#FFFFFF",border:"1px solid #BFDBFE",borderRadius:8,padding:"12px 14px",marginBottom:12}}>
+                        <div style={{fontWeight:900,fontSize:13,color:"#003291",marginBottom:4}}>Intro / Cover slide information</div>
+                        <div style={{fontSize:11,color:"#6B7280",marginBottom:10}}>These fields populate the intro slide when you generate the full presentation now.</div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(160px, 1fr))",gap:10}}>
+                          <input className="text-input" placeholder="District / title, e.g. GPISD" value={presQuickMeta.District||""} onChange={e=>setPresQuickMeta(p=>({...p,District:e.target.value}))}/>
+                          <input className="text-input" placeholder="Meeting type, e.g. Partner Meeting" value={presQuickMeta.meeting_type||""} onChange={e=>setPresQuickMeta(p=>({...p,meeting_type:e.target.value}))}/>
+                          <input className="text-input" placeholder="Subtitle, optional" value={presQuickMeta.subtitle||""} onChange={e=>setPresQuickMeta(p=>({...p,subtitle:e.target.value}))}/>
+                        </div>
+                      </div>
+                    )}
+
+                    {presBatchFiles.length>0&&(
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                        {presBatchFiles.map(f=>(
+                          <div key={f.id} style={{display:"flex",alignItems:"center",gap:6,background:f.error?"#FEF2F2":"#EFF6FF",border:`1px solid ${f.error?"#FCA5A5":"#BFDBFE"}`,borderRadius:999,padding:"6px 10px",fontSize:12,color:f.error?"#991B1B":"#1E40AF"}}>
+                            <span>{f.error?"⚠":"📊"}</span><span style={{fontWeight:700}}>{f.name}</span>{f.upload_path&&<span style={{color:"#6B7280"}}>({(f.size/1024).toFixed(0)} KB)</span>}
+                            {f.error&&<span>{String(f.error).slice(0,90)}</span>}
+                            {f.upload_path&&<button type="button" onClick={()=>removePresentationFile(f.upload_path)} style={{border:"none",background:"transparent",color:"#6B7280",cursor:"pointer",fontWeight:900}}>×</button>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {presSlides.some(s=>SLIDE_INFO[s.slide_type]?.needsData!==false)&&(
+                      <div style={{background:"#FFFFFF",border:"1px solid #E5E7EB",borderRadius:8,padding:"10px 12px",marginBottom:12}}>
+                        <div style={{fontWeight:800,fontSize:12,color:"#374151",marginBottom:8}}>Assign data files to selected data slides</div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))",gap:8}}>
+                          {presSlides.map((s,i)=>{
+                            const needs = SLIDE_INFO[s.slide_type]?.needsData !== false;
+                            if(!needs) return null;
+                            const firstGood = presBatchFiles.find(f=>f.upload_path)?.upload_path || "";
+                            const value = presFileAssignments[i] || firstGood;
+                            return (
+                              <label key={i} style={{fontSize:12,color:"#374151",display:"flex",flexDirection:"column",gap:4}}>
+                                <span style={{fontWeight:800}}>{i+1}. {SLIDE_INFO[s.slide_type]?.name||s.slide_type}</span>
+                                <select className="text-input" value={value} onChange={e=>setPresFileAssignments(p=>({...p,[i]:e.target.value}))}>
+                                  <option value="">Choose data file…</option>
+                                  {presBatchFiles.filter(f=>f.upload_path).map(f=><option key={f.upload_path} value={f.upload_path}>{f.name}</option>)}
+                                </select>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                      <button type="button" className={`generate-btn ${quickBuilding==="pptx"?"loading":""}`} style={{width:"auto",padding:"11px 20px",background:"#16A34A"}} onClick={(e)=>quickGeneratePresentation("pptx", e)} disabled={presBatchInspecting}>
+                        {quickBuilding==="pptx"?<><span className="spinner"/>Generating full PowerPoint…</>:"⬇ Generate Full PowerPoint Now"}
+                      </button>
+                      <button type="button" className={`generate-btn ${quickBuilding==="html"?"loading":""}`} style={{width:"auto",padding:"11px 20px",background:"#003291"}} onClick={(e)=>quickGeneratePresentation("html", e)} disabled={presBatchInspecting}>
+                        {quickBuilding==="html"?<><span className="spinner"/>Generating full HTML…</>:"▶ Generate Full HTML Now"}
+                      </button>
+                      <div style={{fontSize:11,color:"#6B7280"}}>Or use Start Building to preview and approve slides individually.</div>
+                    </div>
+                    {quickBuilding&&(
+                      <div className="loading-banner" style={{marginTop:12}}>
+                        <span className="spinner" style={{width:18,height:18}}/>
+                        <div>
+                          <div style={{fontWeight:800,fontSize:13}}>{quickBuilding==="pptx"?"Generating full editable PowerPoint…":"Generating full HTML presentation…"}</div>
+                          <div style={{fontSize:11,opacity:.85}}>The app is calculating each selected slide from the assigned file automatically. No slide-by-slide preview is required.</div>
+                        </div>
+                      </div>
+                    )}
+                    {status.msg&&presPhase==="plan"&&(
+                      <div className={`status-message ${status.type}`} style={{marginTop:12}}>{status.msg}</div>
+                    )}
+                  </div>
+                )}
+
                 {presSlides.length>0&&(
                   <div className="pres-plan-footer">
                     <div className="pres-plan-count">{presSlides.length} slide{presSlides.length!==1?"s":""} selected</div>
@@ -1695,7 +2434,7 @@ export default function App(){
                 {/* Progress bar — clickable steps */}
                 <div className="card" style={{padding:"14px 20px"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                    <div style={{fontWeight:700,color:"#0D1B4B",fontSize:14}}>
+                    <div style={{fontWeight:700,color:"#003291",fontSize:14}}>
                       Building Presentation — Slide {presCurrentIdx+1} of {presSlides.length}: <span style={{color:"#00B0F0"}}>{curPresSlide.name}</span>
                     </div>
                     <button className="link-btn" style={{color:"#E8192C"}} onClick={()=>{saveCurrentSlideState();setPresPhase("plan");}}>← Back to plan</button>
@@ -1708,7 +2447,7 @@ export default function App(){
                         style={{
                           flex:1, height:8, borderRadius:4, cursor:"pointer",
                           background:s.status==="approved"?"#16A34A":s.status==="skipped"?"#9CA3AF":i===presCurrentIdx?"#00B0F0":"#E5E7EB",
-                          outline:i===presCurrentIdx?"2px solid #0D1B4B":"none",
+                          outline:i===presCurrentIdx?"2px solid #003291":"none",
                           outlineOffset:1,
                           transition:"all .15s",
                         }}/>
@@ -1720,7 +2459,7 @@ export default function App(){
                         onClick={()=>navigateToSlide(i)}
                         style={{
                           fontSize:9, cursor:"pointer",
-                          color:s.status==="approved"?"#16A34A":s.status==="skipped"?"#9CA3AF":i===presCurrentIdx?"#0D1B4B":"#9CA3AF",
+                          color:s.status==="approved"?"#16A34A":s.status==="skipped"?"#9CA3AF":i===presCurrentIdx?"#003291":"#9CA3AF",
                           fontWeight:i===presCurrentIdx?700:400,
                           textAlign:"center", flex:1, overflow:"hidden",
                           textOverflow:"ellipsis", whiteSpace:"nowrap",
@@ -1744,7 +2483,7 @@ export default function App(){
               <div className="card">
                 <div style={{textAlign:"center",padding:"32px 20px"}}>
                   <div style={{fontSize:48,marginBottom:12}}>🎉</div>
-                  <div style={{fontSize:22,fontWeight:800,color:"#0D1B4B",marginBottom:8}}>All slides configured!</div>
+                  <div style={{fontSize:22,fontWeight:800,color:"#003291",marginBottom:8}}>All slides configured!</div>
                   <div style={{fontSize:14,color:"#6B7280",marginBottom:24}}>
                     {presSlides.filter(s=>s.status==="approved").length} slides approved · {presSlides.filter(s=>s.status==="skipped").length} skipped
                   </div>
@@ -1774,13 +2513,18 @@ export default function App(){
                       </div>
                     ))}
                   </div>
-                  <button className={`generate-btn ${buildingPres?"loading":""}`} style={{width:"auto",padding:"14px 36px",fontSize:16}} onClick={buildPresentation} disabled={buildingPres}>
-                    {buildingPres?<><span className="spinner"/>Building presentation…</>:"▶ Build & Download Full Presentation"}
-                  </button>
-                  {buildingPres&&(
+                  <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+                    <button className={`generate-btn ${buildingPres?"loading":""}`} style={{width:"auto",padding:"14px 28px",fontSize:16}} onClick={buildPresentation} disabled={buildingPres||buildingPptx}>
+                      {buildingPres?<><span className="spinner"/>Building HTML…</>:"▶ Download HTML Presentation"}
+                    </button>
+                    <button className={`generate-btn ${buildingPptx?"loading":""}`} style={{width:"auto",padding:"14px 28px",fontSize:16,background:"#16A34A"}} onClick={buildPresentationPptx} disabled={buildingPres||buildingPptx}>
+                      {buildingPptx?<><span className="spinner"/>Building PowerPoint…</>:"⬇ Download Editable PowerPoint"}
+                    </button>
+                  </div>
+                  {(buildingPres||buildingPptx)&&(
                     <div className="loading-status" style={{marginTop:8}}>
                       <span className="spinner dark" style={{width:14,height:14}}/>
-                      <span>Generating all slides and assembling presentation — please wait…</span>
+                      <span>{buildingPptx?"Generating editable PowerPoint with editable charts, shapes, and text…":"Generating all slides and assembling presentation — please wait…"}</span>
                     </div>
                   )}
                   <div style={{marginTop:12}}><button className="link-btn" onClick={()=>{setPresPhase("plan");}}>← Back to plan</button></div>
@@ -1852,7 +2596,7 @@ export default function App(){
     return(
       <>
         {/* Upload step (only shown when needsData) */}
-        {needsData&&(
+        {needsData&&!FULLY_STATIC_TYPES.includes(selectedType)&&(
           <div className="card">
             <div className="card-header"><Num n={stepStart}/><h2 className="card-title">Upload data file</h2></div>
 
@@ -2084,9 +2828,14 @@ export default function App(){
                 <button className="recalc-btn" onClick={()=>{if(onSkip) onSkip();}}>⏭ Skip</button>
               )}
               {!isPresMode&&(
-                <button className={`generate-btn ${generating?"loading":""}`} onClick={handleGenerate} disabled={generating}>
-                  {generating?<><span className="spinner"/>Generating…</>:<>▶ Generate &amp; Download</>}
-                </button>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <button className={`generate-btn ${generating?"loading":""}`} onClick={handleGenerate} disabled={generating} style={{width:"auto",flex:"1 1 220px"}}>
+                    {generating?<><span className="spinner"/>Generating…</>:<>▶ Generate HTML</>}
+                  </button>
+                  <button className={`generate-btn ${generating?"loading":""}`} onClick={handleGeneratePptx} disabled={generating} style={{width:"auto",flex:"1 1 220px",background:"#16A34A"}}>
+                    {generating?<><span className="spinner"/>Generating…</>:<>⬇ Editable PowerPoint</>}
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -2151,7 +2900,7 @@ export default function App(){
             {(manualText.data_source||manualText.as_of_date)&&
              !["cover","mission","methodology","section_divider","agenda"].includes(selectedType)&&(
               <div style={{fontSize:11,color:"#374151",background:"#F1F5F9",border:"1px solid #CBD5E1",borderRadius:4,padding:"6px 12px",marginBottom:8}}>
-                📄 Footnote will read: <em style={{color:"#0D1B4B"}}>
+                📄 Footnote will read: <em style={{color:"#003291"}}>
                   "Source: {(manualText.data_source||"").split(",").map(s=>s.trim()).filter(s=>s && s !== "__other__").join(", ")||"—"} as of {manualText.as_of_date||todayISO()}"
                   {manualText.footnote?` · ${manualText.footnote}`:""}
                 </em>
@@ -2215,7 +2964,7 @@ export default function App(){
                     onClick={()=>setShowSlidePreview(false)}>
                     <div style={{background:"white",borderRadius:8,overflow:"hidden",width:"90vw",maxWidth:1100,boxShadow:"0 24px 80px rgba(0,0,0,.5)"}}
                       onClick={e=>e.stopPropagation()}>
-                      <div style={{padding:"10px 16px",background:"#0D1B4B",color:"white",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <div style={{padding:"10px 16px",background:"#003291",color:"white",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                         <span style={{fontWeight:700,fontSize:13}}>Slide Preview</span>
                         <button onClick={()=>setShowSlidePreview(false)} style={{background:"none",border:"none",color:"white",cursor:"pointer",fontSize:20,lineHeight:1}}>✕</button>
                       </div>
@@ -2341,7 +3090,7 @@ export default function App(){
                   }}>🤖 Regenerate Insights</button>
                   <button
                     className="recalc-btn"
-                    style={{color:"#0D1B4B",borderColor:"#00B0F0",background:"#EFF6FF"}}
+                    style={{color:"#003291",borderColor:"#00B0F0",background:"#EFF6FF"}}
                     onClick={()=>setClaudeQuestion(q=>q || "Calculate the TSI Met percent for this loaded dataset.")}
                   >
                     💬 Ask Claude
@@ -2363,7 +3112,7 @@ export default function App(){
                     padding:"12px 14px"
                   }}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8}}>
-                      <div style={{fontWeight:800,color:"#0D1B4B",fontSize:13}}>💬 Ask Claude about this loaded dataset</div>
+                      <div style={{fontWeight:800,color:"#003291",fontSize:13}}>💬 Ask Claude about this loaded dataset</div>
                       <button
                         type="button"
                         onClick={()=>{setClaudeQuestion("");setClaudeAnswer("");setClaudeError("");}}
@@ -2414,7 +3163,7 @@ export default function App(){
                       </div>
                     )}
                     {claudeAnswer && (
-                      <div style={{marginTop:10,color:"#0D1B4B",background:"#FFFFFF",border:"1px solid #DBEAFE",borderRadius:6,padding:"10px 12px",fontSize:12,lineHeight:1.5,whiteSpace:"pre-wrap"}}>
+                      <div style={{marginTop:10,color:"#003291",background:"#FFFFFF",border:"1px solid #DBEAFE",borderRadius:6,padding:"10px 12px",fontSize:12,lineHeight:1.5,whiteSpace:"pre-wrap"}}>
                         {claudeAnswer}
                       </div>
                     )}
@@ -2433,9 +3182,14 @@ export default function App(){
               <div className="ps-title" style={{marginBottom:8}}>Chart Preview</div>
               <ChartPreview chartData={{...preview.chart_data,categories:editCategories,series:editSeries}} mode={mode}/>
             </div>
-            <button className={`generate-btn ${generating?"loading":""}`} onClick={handleGenerate} disabled={generating}>
-              {generating?<><span className="spinner"/>Generating slide HTML…</>:<>▶&nbsp;Generate &amp; Download Slide</>}
-            </button>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <button className={`generate-btn ${generating?"loading":""}`} onClick={handleGenerate} disabled={generating} style={{width:"auto",flex:"1 1 240px"}}>
+                {generating?<><span className="spinner"/>Generating slide HTML…</>:<>▶&nbsp;Generate HTML Slide</>}
+              </button>
+              <button className={`generate-btn ${generating?"loading":""}`} onClick={handleGeneratePptx} disabled={generating} style={{width:"auto",flex:"1 1 240px",background:"#16A34A"}}>
+                {generating?<><span className="spinner"/>Generating PowerPoint…</>:<>⬇&nbsp;Download Editable PowerPoint</>}
+              </button>
+            </div>
             {generating&&(
               <div className="loading-banner">
                 <span className="spinner" style={{width:18,height:18}}/>
